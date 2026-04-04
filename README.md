@@ -2,7 +2,7 @@
 
 ### Your AI assistant wastes thousands of tokens every conversation just figuring out your project. codesight fixes that in one command.
 
-**Zero dependencies. 25+ framework detectors. 4 ORM parsers. MCP server. One `npx` call.**
+**Zero dependencies. 25+ framework detectors. 8 ORM parsers. 8 MCP tools. Blast radius analysis. One `npx` call.**
 
 [![npm version](https://img.shields.io/npm/v/codesight?style=for-the-badge&logo=npm&color=CB3837)](https://www.npmjs.com/package/codesight)
 [![npm downloads](https://img.shields.io/npm/dm/codesight?style=for-the-badge&logo=npm&color=blue&label=Monthly%20Downloads)](https://www.npmjs.com/package/codesight)
@@ -26,7 +26,7 @@
 ---
 
 ```
-0 dependencies · Node.js >= 18 · 27 tests · MIT
+0 dependencies · Node.js >= 18 · 27 tests · 8 MCP tools · MIT
 ```
 
 ## Works With
@@ -42,10 +42,12 @@ npx codesight
 That's it. Run it in any project root. No config, no setup, no API keys.
 
 ```bash
-npx codesight --init       # Also generate CLAUDE.md, .cursorrules, codex.md, AGENTS.md
-npx codesight --open       # Also open interactive HTML report in browser
-npx codesight --mcp        # Start as MCP server for Claude Code / Cursor
-npx codesight --benchmark  # Show detailed token savings breakdown
+npx codesight --init                # Generate CLAUDE.md, .cursorrules, codex.md, AGENTS.md
+npx codesight --open                # Open interactive HTML report in browser
+npx codesight --mcp                 # Start as MCP server (8 tools) for Claude Code / Cursor
+npx codesight --blast src/lib/db.ts # Show blast radius for a file
+npx codesight --profile claude-code # Generate optimized config for a specific AI tool
+npx codesight --benchmark           # Show detailed token savings breakdown
 ```
 
 ## What It Does
@@ -117,6 +119,35 @@ The files imported the most are the ones that break the most things when changed
 - `apps/api/src/lib/auth.ts` — imported by **7** files
 ```
 
+## Blast Radius
+
+See exactly what breaks if you change a file. BFS through the import graph finds all transitively affected files, routes, models, and middleware.
+
+```bash
+npx codesight --blast src/lib/db.ts
+```
+
+```
+  Blast Radius: src/lib/db.ts
+  Depth: 3 hops
+
+  Affected files (10):
+    src/routes/users.ts
+    src/routes/projects.ts
+    src/routes/billing.ts
+    ...
+
+  Affected routes (33):
+    POST /auth/login — src/routes/auth.ts
+    GET /api/users — src/routes/users.ts
+    ...
+
+  Affected models: users, projects, subscriptions
+  Affected middleware: authMiddleware
+```
+
+Your AI can also query blast radius through the MCP server before making changes.
+
 ## Environment Audit
 
 Every env var across your codebase, flagged as required or has default, with the exact file where it is referenced.
@@ -157,7 +188,7 @@ npx codesight --benchmark
 | Category | Supported |
 |---|---|
 | **Routes** | Hono, Express, Fastify, Next.js (App + Pages), Koa, NestJS, tRPC, Elysia, AdonisJS, SvelteKit, Remix, Nuxt, FastAPI, Flask, Django, Go (net/http, Gin, Fiber, Echo, Chi), Rails, Phoenix, Spring Boot, Actix, Axum, raw http.createServer |
-| **Schema** | Drizzle, Prisma, TypeORM, Mongoose, Sequelize, SQLAlchemy, ActiveRecord, Ecto |
+| **Schema** | Drizzle, Prisma, TypeORM, Mongoose, Sequelize, SQLAlchemy, ActiveRecord, Ecto (8 ORMs) |
 | **Components** | React, Vue, Svelte (auto-filters shadcn/ui and Radix primitives) |
 | **Libraries** | TypeScript, JavaScript, Python, Go, Ruby, Elixir, Java, Kotlin, Rust (exports with function signatures) |
 | **Middleware** | Auth, rate limiting, CORS, validation, logging, error handlers |
@@ -184,7 +215,7 @@ Generates ready-to-use instruction files for every major AI coding tool at once:
 
 Each file is pre-filled with your project's stack, architecture, high-impact files, and required env vars. Your AI reads it on startup and starts with full context from the first message.
 
-## MCP Server
+## MCP Server (8 Tools)
 
 ```bash
 npx codesight --mcp
@@ -203,7 +234,32 @@ Runs as a Model Context Protocol server. Claude Code and Cursor call it directly
 }
 ```
 
-Exposes one tool: `codesight_scan`. Your AI calls it whenever it needs to understand the project.
+Exposes 8 specialized tools, each returning only what your AI needs:
+
+| Tool | What it does |
+|---|---|
+| `codesight_scan` | Full project scan (~3K-5K tokens) |
+| `codesight_get_summary` | Compact overview (~500 tokens) |
+| `codesight_get_routes` | Routes filtered by prefix, tag, or method |
+| `codesight_get_schema` | Schema filtered by model name |
+| `codesight_get_blast_radius` | Impact analysis before changing a file |
+| `codesight_get_env` | Environment variables (filter: required only) |
+| `codesight_get_hot_files` | Most imported files with configurable limit |
+| `codesight_refresh` | Force re-scan (results are cached per session) |
+
+Your AI asks for exactly what it needs instead of loading the entire context map. Session caching means the first call scans, subsequent calls return instantly.
+
+## AI Tool Profiles
+
+```bash
+npx codesight --profile claude-code
+npx codesight --profile cursor
+npx codesight --profile codex
+npx codesight --profile copilot
+npx codesight --profile windsurf
+```
+
+Generates an optimized config file for a specific AI tool. Each profile includes your project summary, stack info, high-impact files, required env vars, and tool-specific instructions on how to use codesight outputs. For Claude Code, this includes MCP tool usage instructions. For Cursor, it points to the right codesight files. Each profile writes to the correct file for that tool.
 
 ## Visual Report
 
@@ -254,34 +310,37 @@ Context stays fresh without thinking about it.
 ## All Options
 
 ```bash
-npx codesight                       # Scan current directory
-npx codesight ./my-project          # Scan specific directory
-npx codesight --init                # Generate AI config files
-npx codesight --open                # Open visual HTML report
-npx codesight --html                # Generate HTML report without opening
-npx codesight --mcp                 # Start MCP server
-npx codesight --watch               # Watch mode
-npx codesight --hook                # Install git pre-commit hook
-npx codesight --benchmark           # Detailed token savings breakdown
-npx codesight --json                # Output as JSON
-npx codesight -o .ai-context        # Custom output directory
-npx codesight -d 5                  # Limit directory depth
+npx codesight                              # Scan current directory
+npx codesight ./my-project                 # Scan specific directory
+npx codesight --init                       # Generate AI config files
+npx codesight --open                       # Open visual HTML report
+npx codesight --html                       # Generate HTML report without opening
+npx codesight --mcp                        # Start MCP server (8 tools)
+npx codesight --blast src/lib/db.ts        # Show blast radius for a file
+npx codesight --profile claude-code        # Optimized config for specific tool
+npx codesight --watch                      # Watch mode
+npx codesight --hook                       # Install git pre-commit hook
+npx codesight --benchmark                  # Detailed token savings breakdown
+npx codesight --json                       # Output as JSON
+npx codesight -o .ai-context              # Custom output directory
+npx codesight -d 5                         # Limit directory depth
 ```
 
 ## How It Compares
 
 Most AI context tools dump your entire codebase into one file. codesight takes a different approach: it **parses** your code to extract structured information.
 
-| | codesight | File concatenation tools |
-|---|---|---|
-| **Output** | Structured routes, schema, components, deps | Raw file contents |
-| **Token cost** | ~3,000-5,000 tokens | 50,000-500,000+ tokens |
-| **Route detection** | 25+ frameworks auto-detected | None |
-| **Schema parsing** | ORM-aware with relations | None |
-| **Dependency graph** | Hot file detection | None |
-| **AI config generation** | CLAUDE.md, .cursorrules, etc. | None |
-| **MCP server** | Built-in | Varies |
-| **Dependencies** | Zero | Varies |
+| | codesight | File concatenation tools | AST-based tools |
+|---|---|---|---|
+| **Output** | Structured routes, schema, components, deps | Raw file contents | Call graphs, class diagrams |
+| **Token cost** | ~3,000-5,000 tokens | 50,000-500,000+ tokens | Varies |
+| **Route detection** | 25+ frameworks auto-detected | None | Limited |
+| **Schema parsing** | 8 ORMs with relations | None | Varies |
+| **Blast radius** | BFS through import graph | None | Some |
+| **AI tool profiles** | 5 tools (Claude, Cursor, Codex, Copilot, Windsurf) | None | None |
+| **MCP server** | 8 specialized tools with session caching | None | Some |
+| **Setup** | `npx codesight` (zero deps, zero config) | Copy/paste | Install compilers, runtimes |
+| **Dependencies** | Zero | Varies | Tree-sitter, SQLite, etc. |
 
 ## Contributing
 

@@ -156,3 +156,109 @@ ${context}
 
   return generated;
 }
+
+/**
+ * Generate a profile-specific config file optimized for a particular AI tool.
+ * Includes tool-specific instructions on how to use codesight outputs.
+ */
+export async function generateProfileConfig(
+  result: ScanResult,
+  root: string,
+  profile: string
+): Promise<string> {
+  const { project, routes, schemas, graph, config } = result;
+
+  // Build a compact always-load summary (~1-2k tokens)
+  const summaryLines: string[] = [];
+  summaryLines.push(`# ${project.name} — Project Context\n`);
+  summaryLines.push(`**Stack:** ${project.frameworks.join(", ") || "generic"} | ${project.orms.join(", ") || "none"} | ${project.language}`);
+  if (project.isMonorepo) {
+    summaryLines.push(`**Monorepo:** ${project.workspaces.map((w) => w.name).join(", ")}`);
+  }
+  summaryLines.push(`\n${routes.length} routes | ${schemas.length} models | ${config.envVars.length} env vars | ${graph.edges.length} import links\n`);
+
+  // Top entry points
+  if (routes.length > 0) {
+    const areas = [...new Set(routes.map((r) => r.path.split("/").slice(0, 3).join("/")))].slice(0, 10);
+    summaryLines.push(`**API areas:** ${areas.join(", ")}`);
+  }
+
+  // High-impact files
+  if (graph.hotFiles.length > 0) {
+    summaryLines.push(`\n**High-impact files** (change carefully):`);
+    for (const hf of graph.hotFiles.slice(0, 5)) {
+      summaryLines.push(`- ${hf.file} (imported by ${hf.importedBy} files)`);
+    }
+  }
+
+  // Required env
+  const required = config.envVars.filter((e) => !e.hasDefault);
+  if (required.length > 0) {
+    summaryLines.push(`\n**Required env vars:** ${required.map((e) => e.name).join(", ")}`);
+  }
+
+  summaryLines.push(`\n---\n`);
+
+  // Profile-specific instructions
+  switch (profile) {
+    case "claude-code": {
+      summaryLines.push(`## Instructions for Claude Code\n`);
+      summaryLines.push(`Before exploring the repo, read these files in order:`);
+      summaryLines.push(`1. \`.codesight/CODESIGHT.md\` — full context map (routes, schema, components, deps)`);
+      summaryLines.push(`2. Use the codesight MCP server for targeted queries:\n`);
+      summaryLines.push(`   - \`codesight_get_summary\` — quick project overview`);
+      summaryLines.push(`   - \`codesight_get_routes --prefix /api/users\` — filtered routes`);
+      summaryLines.push(`   - \`codesight_get_blast_radius --file src/lib/db.ts\` — impact analysis before changes`);
+      summaryLines.push(`   - \`codesight_get_schema --model users\` — specific model details`);
+      summaryLines.push(`\nOnly open specific files after consulting codesight context. This saves ~${result.tokenStats.saved.toLocaleString()} tokens per conversation.`);
+      const outPath = join(root, "CLAUDE.md");
+      const existing = await fileExists(outPath) ? await readFile(outPath, "utf-8") : "";
+      if (existing && existing.includes("codesight")) {
+        await writeFile(outPath, existing.replace(/# AI Context.*?(?=\n#|\n$|$)/s, summaryLines.join("\n")));
+      } else if (existing) {
+        await writeFile(outPath, existing + "\n\n" + summaryLines.join("\n"));
+      } else {
+        await writeFile(outPath, summaryLines.join("\n"));
+      }
+      return "CLAUDE.md";
+    }
+    case "cursor": {
+      summaryLines.push(`## Instructions for Cursor\n`);
+      summaryLines.push(`When answering questions about this project:`);
+      summaryLines.push(`1. Read \`.codesight/CODESIGHT.md\` first for full project structure`);
+      summaryLines.push(`2. Use \`.codesight/routes.md\` to find relevant API handlers`);
+      summaryLines.push(`3. Use \`.codesight/schema.md\` to understand data models`);
+      summaryLines.push(`4. Use \`.codesight/graph.md\` to check blast radius before changes`);
+      summaryLines.push(`\nDo not crawl the file tree — the codesight context map already contains the full project structure.`);
+      await writeFile(join(root, ".cursorrules"), summaryLines.join("\n"));
+      return ".cursorrules";
+    }
+    case "codex": {
+      summaryLines.push(`## Instructions for OpenAI Codex\n`);
+      summaryLines.push(`This project uses codesight for structured context. Read .codesight/CODESIGHT.md before exploring files.`);
+      summaryLines.push(`Routes: .codesight/routes.md | Schema: .codesight/schema.md | Dependencies: .codesight/graph.md`);
+      await writeFile(join(root, "codex.md"), summaryLines.join("\n"));
+      return "codex.md";
+    }
+    case "copilot": {
+      summaryLines.push(`## Instructions for GitHub Copilot\n`);
+      summaryLines.push(`Project context is pre-generated in .codesight/. Consult CODESIGHT.md for full architecture.`);
+      const ghDir = join(root, ".github");
+      await fileExists(ghDir) || await (await import("node:fs/promises")).mkdir(ghDir, { recursive: true });
+      await writeFile(join(ghDir, "copilot-instructions.md"), summaryLines.join("\n"));
+      return ".github/copilot-instructions.md";
+    }
+    case "windsurf": {
+      summaryLines.push(`## Instructions for Windsurf\n`);
+      summaryLines.push(`Read .codesight/CODESIGHT.md for full project map before exploring files.`);
+      summaryLines.push(`Use .codesight/routes.md for API structure and .codesight/graph.md for dependency analysis.`);
+      await writeFile(join(root, ".windsurfrules"), summaryLines.join("\n"));
+      return ".windsurfrules";
+    }
+    default: {
+      // Generic profile — write all configs
+      const generated = await generateAIConfigs(result, root);
+      return generated.join(", ") || "all configs already exist";
+    }
+  }
+}

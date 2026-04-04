@@ -17,7 +17,7 @@ import { generateAIConfigs } from "./generators/ai-config.js";
 import { generateHtmlReport } from "./generators/html-report.js";
 import type { ScanResult } from "./types.js";
 
-const VERSION = "1.1.1";
+const VERSION = "1.2.0";
 const BRAND = "codesight";
 
 function printHelp() {
@@ -37,6 +37,8 @@ function printHelp() {
     --mcp                Start as MCP server (for Claude Code, Cursor)
     --json               Output JSON instead of markdown
     --benchmark          Show detailed token savings breakdown
+    --profile <tool>     Generate optimized config (claude-code|cursor|codex|copilot|windsurf)
+    --blast <file>       Show blast radius for a file
     -v, --version        Show version
     -h, --help           Show this help
 
@@ -258,6 +260,8 @@ async function main() {
   let doOpen = false;
   let doMcp = false;
   let doBenchmark = false;
+  let doProfile = "";
+  let doBlast = "";
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -282,6 +286,10 @@ async function main() {
       doMcp = true;
     } else if (arg === "--benchmark") {
       doBenchmark = true;
+    } else if (arg === "--profile" && args[i + 1]) {
+      doProfile = args[++i];
+    } else if (arg === "--blast" && args[i + 1]) {
+      doBlast = args[++i];
     } else if (!arg.startsWith("-")) {
       targetDir = resolve(arg);
     }
@@ -365,6 +373,51 @@ async function main() {
   - Search overhead: AI typically runs ${Math.min(ts.fileCount, 50)} glob/grep operations
   - 1.3x multiplier: AI revisits files during multi-turn exploration
 `);
+  }
+
+  // Blast radius analysis
+  if (doBlast) {
+    const { analyzeBlastRadius } = await import("./detectors/blast-radius.js");
+    const br = analyzeBlastRadius(doBlast, result);
+
+    console.log(`\n  Blast Radius: ${doBlast}`);
+    console.log(`  Depth: ${br.depth} hops\n`);
+
+    if (br.affectedFiles.length > 0) {
+      console.log(`  Affected files (${br.affectedFiles.length}):`);
+      for (const f of br.affectedFiles.slice(0, 20)) {
+        console.log(`    ${f}`);
+      }
+      if (br.affectedFiles.length > 20) console.log(`    ... +${br.affectedFiles.length - 20} more`);
+    }
+
+    if (br.affectedRoutes.length > 0) {
+      console.log(`\n  Affected routes (${br.affectedRoutes.length}):`);
+      for (const r of br.affectedRoutes) {
+        console.log(`    ${r.method} ${r.path} — ${r.file}`);
+      }
+    }
+
+    if (br.affectedModels.length > 0) {
+      console.log(`\n  Affected models: ${br.affectedModels.join(", ")}`);
+    }
+
+    if (br.affectedMiddleware.length > 0) {
+      console.log(`\n  Affected middleware: ${br.affectedMiddleware.join(", ")}`);
+    }
+
+    if (br.affectedFiles.length === 0) {
+      console.log("  No downstream dependencies. Minimal blast radius.");
+    }
+    console.log("");
+  }
+
+  // Profile-based AI config generation
+  if (doProfile) {
+    const { generateProfileConfig } = await import("./generators/ai-config.js");
+    process.stdout.write(`  Generating ${doProfile} profile...`);
+    const file = await generateProfileConfig(result, root, doProfile);
+    console.log(` ${file}`);
   }
 
   // Watch mode (blocks)

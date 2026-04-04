@@ -122,6 +122,24 @@ export interface DependencyGraph {
   hotFiles: { file: string; importedBy: number }[]; // most-imported files
 }
 
+export interface BlastRadiusResult {
+  file: string;
+  affectedFiles: string[];
+  affectedRoutes: RouteInfo[];
+  affectedModels: string[];
+  affectedMiddleware: string[];
+  depth: number;
+}
+
+export interface CodesightConfig {
+  disableDetectors?: string[];
+  customTags?: Record<string, string[]>;
+  maxDepth?: number;
+  outputDir?: string;
+  profile?: "claude-code" | "cursor" | "codex" | "copilot" | "windsurf" | "generic";
+  ignorePatterns?: string[];
+}
+
 export interface ScanResult {
   project: ProjectInfo;
   routes: RouteInfo[];
