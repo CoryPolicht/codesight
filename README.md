@@ -225,7 +225,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: npx codesight
+      - run: npx -y codesight
       - uses: actions/upload-artifact@v4
         with:
           name: codesight
