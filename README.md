@@ -1,20 +1,63 @@
-# codesight
+<div align="center">
 
-Your AI assistant wastes thousands of tokens every conversation just figuring out your project structure. codesight fixes that in one command.
+### Your AI assistant wastes thousands of tokens every conversation just figuring out your project. codesight fixes that in one command.
+
+**Zero dependencies. 11 framework detectors. 4 ORM parsers. MCP server. One `npx` call.**
+
+[![npm version](https://img.shields.io/npm/v/codesight?style=for-the-badge&logo=npm&color=CB3837)](https://www.npmjs.com/package/codesight)
+[![npm downloads](https://img.shields.io/npm/dm/codesight?style=for-the-badge&logo=npm&color=blue&label=Monthly%20Downloads)](https://www.npmjs.com/package/codesight)
+[![npm total](https://img.shields.io/npm/dt/codesight?style=for-the-badge&logo=npm&color=cyan&label=Total%20Downloads)](https://www.npmjs.com/package/codesight)
+[![GitHub stars](https://img.shields.io/github/stars/Houseofmvps/codesight?style=for-the-badge&logo=github&color=gold)](https://github.com/Houseofmvps/codesight/stargazers)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge&logo=opensourceinitiative)](LICENSE)
+[![Sponsor](https://img.shields.io/badge/Sponsor-EA4AAA?style=for-the-badge&logo=githubsponsors&logoColor=white)](https://github.com/sponsors/Houseofmvps)
+
+---
+
+[![Follow @kaileskkhumar](https://img.shields.io/badge/Follow%20%40kaileskkhumar-000000?style=for-the-badge&logo=x&logoColor=white)](https://x.com/kaileskkhumar)
+[![LinkedIn](https://img.shields.io/badge/LinkedIn-Connect-0A66C2?style=for-the-badge&logo=linkedin)](https://www.linkedin.com/in/kailesk-khumar)
+[![houseofmvps.com](https://img.shields.io/badge/houseofmvps.com-Website-green?style=for-the-badge&logo=google-chrome&logoColor=white)](https://houseofmvps.com)
+
+**Built by [Kailesk Khumar](https://www.linkedin.com/in/kailesk-khumar), solo founder of [houseofmvps.com](https://houseofmvps.com)**
+
+*Also: [ultraship](https://github.com/Houseofmvps/ultraship) (39 expert skills for Claude Code) · [claude-rank](https://github.com/Houseofmvps/claude-rank) (SEO/GEO/AEO plugin for Claude Code)*
+
+</div>
+
+---
+
+```
+0 dependencies · Node.js >= 18 · MIT
+```
+
+## Install
 
 ```bash
 npx codesight
 ```
 
-It scans your codebase and generates a compact, structured context map that any AI coding tool can read instantly. Routes, database schema, components, dependencies, environment variables, middleware, all of it, mapped and ready.
+That's it. Run it in any project root. No config, no setup, no API keys.
 
-Your AI starts every conversation already understanding your project. No more watching it grep through files, read configs, and burn tokens on exploration.
+```bash
+npx codesight --init       # Also generate CLAUDE.md, .cursorrules, codex.md, AGENTS.md
+npx codesight --open       # Also open interactive HTML report in browser
+npx codesight --mcp        # Start as MCP server for Claude Code / Cursor
+```
+
+## What It Does
+
+Every AI coding conversation starts the same way. Your assistant reads files, greps for patterns, opens configs, just to understand the project. That exploration costs tens of thousands of tokens before it writes a single line of code.
+
+codesight scans your codebase once and generates a structured context map. Routes, database schema, components, dependencies, environment variables, middleware, all condensed into ~3,000 to 5,000 tokens of structured markdown. Your AI reads one file and knows the entire project.
+
+```
+Output size:      ~3,200 tokens
+Exploration cost: ~52,000 tokens (without codesight)
+Saved:            ~48,800 tokens per conversation
+```
 
 Works with **Claude Code, Cursor, GitHub Copilot, OpenAI Codex, Windsurf, Cline**, and anything that reads markdown.
 
-## How It Works
-
-Run `npx codesight` in any project. It produces a `.codesight/` directory:
+## What It Generates
 
 ```
 .codesight/
@@ -23,17 +66,15 @@ Run `npx codesight` in any project. It produces a `.codesight/` directory:
   schema.md        Every database model with fields, types, keys, and relations
   components.md    Every UI component with its props
   libs.md          Every library export with function signatures
-  config.md        Every env var (flagged as required or has default), config files, key deps
+  config.md        Every env var (required vs default), config files, key deps
   middleware.md    Auth, rate limiting, CORS, validation, logging, error handlers
-  graph.md         Which files import what, and which files break the most things if changed
-  report.html      Visual dashboard you can open in a browser
+  graph.md         Which files import what and which break the most things if changed
+  report.html      Interactive visual dashboard (with --html or --open)
 ```
 
-Point your AI assistant at `CODESIGHT.md` and it has complete project context in a single read.
+## Routes
 
-## What You Get
-
-**Your routes, fully mapped.** Not just paths. Methods, URL parameters, what each route touches (auth, database, cache, payments, AI, email, queues), and where the handler lives.
+Not just paths. Methods, URL parameters, what each route touches (auth, database, cache, payments, AI, email, queues), and where the handler lives. Detects routes across 11 frameworks automatically.
 
 ```markdown
 - `POST` `/auth/login` [auth, db, email]
@@ -42,7 +83,9 @@ Point your AI assistant at `CODESIGHT.md` and it has complete project context in
 - `POST` `/api/webhooks/stripe` [payment]
 ```
 
-**Your database schema, instantly readable.** Models, fields, types, primary keys, foreign keys, unique constraints, relations. No need to open migration files or ORM configs.
+## Schema
+
+Models, fields, types, primary keys, foreign keys, unique constraints, relations. Parsed directly from your ORM definitions. No need to open migration files.
 
 ```markdown
 ### users
@@ -59,7 +102,9 @@ Point your AI assistant at `CODESIGHT.md` and it has complete project context in
 - _relations_: userId -> users.id
 ```
 
-**Your dependency graph, with blast radius.** The files that are imported the most are the ones that break the most things when changed. codesight surfaces them so your AI knows to be careful.
+## Dependency Graph
+
+The files imported the most are the ones that break the most things when changed. codesight finds them and tells your AI to be careful.
 
 ```markdown
 ## Most Imported Files (change these carefully)
@@ -68,7 +113,9 @@ Point your AI assistant at `CODESIGHT.md` and it has complete project context in
 - `apps/api/src/lib/auth.ts` — imported by **7** files
 ```
 
-**Your env vars, audited.** Which ones are required, which ones have defaults, and where each one is referenced. No more hunting through `.env.example` files.
+## Environment Audit
+
+Every env var across your codebase, flagged as required or has default, with the exact file where it is referenced.
 
 ```markdown
 - `DATABASE_URL` **required** — apps/api/src/lib/db.ts
@@ -76,29 +123,20 @@ Point your AI assistant at `CODESIGHT.md` and it has complete project context in
 - `PORT` (has default) — apps/api/src/index.ts
 ```
 
-**Token savings, measured.** codesight shows you exactly how much context it provides versus how much your AI would spend exploring the same information manually.
+## Supported Stacks
 
-```
-Output size:      ~3,200 tokens
-Exploration cost: ~52,000 tokens (without codesight)
-Saved:            ~48,800 tokens per conversation
-```
+| Category | Supported |
+|---|---|
+| **Routes** | Hono, Express, Fastify, Next.js (App + Pages), Koa, FastAPI, Flask, Django, Go (net/http, Gin, Fiber) |
+| **Schema** | Drizzle, Prisma, TypeORM, SQLAlchemy |
+| **Components** | React, Vue, Svelte (auto-filters shadcn/ui and Radix primitives) |
+| **Libraries** | TypeScript, JavaScript, Python, Go (exports with function signatures) |
+| **Middleware** | Auth, rate limiting, CORS, validation, logging, error handlers |
+| **Dependencies** | Import graph with hot file detection (most imported = highest blast radius) |
+| **Contracts** | URL params, request types, response types from route handlers |
+| **Monorepos** | pnpm, npm, yarn workspaces (cross-workspace detection) |
 
-## Works With Every Stack
-
-codesight is not tied to one framework or one language.
-
-**Routes:** Hono, Express, Fastify, Next.js (App Router + Pages), Koa, FastAPI, Flask, Django, Go (net/http, Gin, Fiber)
-
-**Schema:** Drizzle, Prisma, TypeORM, SQLAlchemy
-
-**Components:** React, Vue, Svelte. Automatically filters out shadcn/ui and Radix primitives so you only see your own components.
-
-**Libraries:** TypeScript, JavaScript, Python, Go. Extracts exported functions with signatures, classes, interfaces, types, enums.
-
-**Monorepos:** pnpm workspaces, npm workspaces, yarn workspaces. Detects frameworks and ORMs across all workspace packages automatically.
-
-## One Command AI Setup
+## AI Config Generation
 
 ```bash
 npx codesight --init
@@ -106,21 +144,15 @@ npx codesight --init
 
 Generates ready-to-use instruction files for every major AI coding tool at once:
 
-- **CLAUDE.md** for Claude Code
-- **.cursorrules** for Cursor
-- **.github/copilot-instructions.md** for GitHub Copilot
-- **codex.md** for OpenAI Codex CLI
-- **AGENTS.md** for OpenAI Codex agents
+| File | Tool |
+|---|---|
+| `CLAUDE.md` | Claude Code |
+| `.cursorrules` | Cursor |
+| `.github/copilot-instructions.md` | GitHub Copilot |
+| `codex.md` | OpenAI Codex CLI |
+| `AGENTS.md` | OpenAI Codex agents |
 
-Each file is pre-filled with your project's stack, architecture overview, high-impact files, and required environment variables. Your AI assistant reads it automatically and starts with full context from the first message.
-
-## Visual Report
-
-```bash
-npx codesight --open
-```
-
-Opens an interactive HTML dashboard in your browser showing your full project map: routes table, schema cards, dependency impact bars, env var audit, middleware overview, and a token savings breakdown. Useful for onboarding new team members or just seeing your project from above.
+Each file is pre-filled with your project's stack, architecture, high-impact files, and required env vars. Your AI reads it on startup and starts with full context from the first message.
 
 ## MCP Server
 
@@ -128,9 +160,7 @@ Opens an interactive HTML dashboard in your browser showing your full project ma
 npx codesight --mcp
 ```
 
-Runs codesight as a Model Context Protocol server. Claude Code and Cursor can call it directly to get project context on demand.
-
-Add to your Claude Code or Cursor MCP config:
+Runs as a Model Context Protocol server. Claude Code and Cursor call it directly to get project context on demand.
 
 ```json
 {
@@ -143,7 +173,17 @@ Add to your Claude Code or Cursor MCP config:
 }
 ```
 
-## Stays Fresh Automatically
+Exposes one tool: `codesight_scan`. Your AI calls it whenever it needs to understand the project.
+
+## Visual Report
+
+```bash
+npx codesight --open
+```
+
+Opens an interactive HTML dashboard in your browser. Routes table with method badges and tags. Schema cards with fields and relations. Dependency hot files with impact bars. Env var audit. Token savings breakdown. Useful for onboarding or just seeing your project from above.
+
+## Watch Mode and Git Hook
 
 **Watch mode** re-scans when files change:
 
@@ -156,6 +196,8 @@ npx codesight --watch
 ```bash
 npx codesight --hook
 ```
+
+Context stays fresh without thinking about it.
 
 ## All Options
 
@@ -173,10 +215,29 @@ npx codesight -o .ai-context        # Custom output directory
 npx codesight -d 5                  # Limit directory depth
 ```
 
-## Zero Dependencies
+## Contributing
 
-codesight has zero runtime dependencies. Only Node.js built-ins. Installs in seconds, runs anywhere Node runs, no supply chain risk.
+```bash
+git clone https://github.com/Houseofmvps/codesight.git
+cd codesight
+pnpm install
+pnpm dev              # Run locally
+pnpm build            # Compile TypeScript
+```
+
+PRs welcome. Open an issue first for large changes.
 
 ## License
 
 MIT
+
+---
+
+<div align="center">
+
+If codesight saves you tokens, [star it on GitHub](https://github.com/Houseofmvps/codesight) so others find it too.
+
+[![GitHub stars](https://img.shields.io/github/stars/Houseofmvps/codesight?style=for-the-badge&logo=github&color=gold)](https://github.com/Houseofmvps/codesight/stargazers)
+[![Sponsor](https://img.shields.io/badge/Sponsor-EA4AAA?style=for-the-badge&logo=githubsponsors&logoColor=white)](https://github.com/sponsors/Houseofmvps)
+
+</div>
