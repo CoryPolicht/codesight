@@ -273,6 +273,14 @@ async function detectFrameworks(
     } catch {}
   }
 
+  // PHP: composer.json or .php files in root
+  const hasComposerJson = await fileExists(join(root, "composer.json"));
+  if (hasComposerJson || (await (async () => {
+    try { return (await readdir(root)).some((e) => e.endsWith(".php")); } catch { return false; }
+  })())) {
+    frameworks.push("php");
+  }
+
   // Fallback: detect raw http.createServer if no other frameworks found
   if (frameworks.length === 0) {
     frameworks.push("raw-http");
@@ -358,6 +366,14 @@ async function detectLanguage(
 
   if (langs.length > 1) return "mixed";
   if (langs.length === 1) return langs[0] as any;
+
+  // Fallback: detect by file extensions present in root
+  try {
+    const entries = await readdir(root);
+    const hasPHPFiles = entries.some((e) => e.endsWith(".php"));
+    if (hasPHPFiles) return "php";
+  } catch {}
+
   return "javascript";
 }
 

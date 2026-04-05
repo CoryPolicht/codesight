@@ -108,6 +108,9 @@ export async function detectRoutes(
       case "raw-http":
         routes.push(...(await detectRawHttpRoutes(files, project)));
         break;
+      case "php":
+        routes.push(...(await detectPHPRoutes(files, project)));
+        break;
     }
   }
 
@@ -131,13 +134,13 @@ async function detectNextAppRoutes(
   project: ProjectInfo
 ): Promise<RouteInfo[]> {
   const routeFiles = files.filter(
-    (f) => f.match(/\/app\/.*\/route\.(ts|js|tsx|jsx)$/) || f.match(/\/app\/route\.(ts|js|tsx|jsx)$/)
+    (f) => f.match(/[/\\]app[/\\].*[/\\]route\.(ts|js|tsx|jsx)$/) || f.match(/[/\\]app[/\\]route\.(ts|js|tsx|jsx)$/)
   );
   const routes: RouteInfo[] = [];
 
   for (const file of routeFiles) {
     const content = await readFileSafe(file);
-    const rel = relative(project.root, file);
+    const rel = relative(project.root, file).replace(/\\/g, "/");
     const pathMatch = rel.match(/(?:src\/)?app(.*)\/route\./);
     const apiPath = pathMatch ? pathMatch[1] || "/" : "/";
 
@@ -166,13 +169,13 @@ async function detectNextPagesApi(
   project: ProjectInfo
 ): Promise<RouteInfo[]> {
   const apiFiles = files.filter((f) =>
-    f.match(/\/pages\/api\/.*\.(ts|js|tsx|jsx)$/)
+    f.match(/[/\\]pages[/\\]api[/\\].*\.(ts|js|tsx|jsx)$/)
   );
   const routes: RouteInfo[] = [];
 
   for (const file of apiFiles) {
     const content = await readFileSafe(file);
-    const rel = relative(project.root, file);
+    const rel = relative(project.root, file).replace(/\\/g, "/");
     const pathMatch = rel.match(/(?:src\/)?pages(\/api\/.*)\.(?:ts|js|tsx|jsx)$/);
     let apiPath = pathMatch ? pathMatch[1] : "/api";
     apiPath = apiPath.replace(/\/index$/, "").replace(/\[([^\]]+)\]/g, ":$1");
@@ -571,13 +574,13 @@ async function detectSvelteKitRoutes(
 ): Promise<RouteInfo[]> {
   // SvelteKit API routes: src/routes/**/+server.ts
   const routeFiles = files.filter(
-    (f) => f.match(/\/routes\/.*\+server\.(ts|js)$/)
+    (f) => f.match(/[/\\]routes[/\\].*\+server\.(ts|js)$/)
   );
   const routes: RouteInfo[] = [];
 
   for (const file of routeFiles) {
     const content = await readFileSafe(file);
-    const rel = relative(project.root, file);
+    const rel = relative(project.root, file).replace(/\\/g, "/");
 
     // Extract path from file structure: src/routes/api/users/+server.ts -> /api/users
     const pathMatch = rel.match(/(?:src\/)?routes(.*)\/\+server\./);
@@ -625,13 +628,13 @@ async function detectRemixRoutes(
 ): Promise<RouteInfo[]> {
   // Remix routes: app/routes/*.tsx with loader/action exports
   const routeFiles = files.filter(
-    (f) => f.match(/\/routes\/.*\.(ts|tsx|js|jsx)$/)
+    (f) => f.match(/[/\\]routes[/\\].*\.(ts|tsx|js|jsx)$/)
   );
   const routes: RouteInfo[] = [];
 
   for (const file of routeFiles) {
     const content = await readFileSafe(file);
-    const rel = relative(project.root, file);
+    const rel = relative(project.root, file).replace(/\\/g, "/");
 
     // Convert filename to route path
     const pathMatch = rel.match(/(?:app\/)?routes\/(.+)\.(ts|tsx|js|jsx)$/);
@@ -672,13 +675,13 @@ async function detectNuxtRoutes(
 ): Promise<RouteInfo[]> {
   // Nuxt server routes: server/api/**/*.ts
   const routeFiles = files.filter(
-    (f) => f.match(/\/server\/(?:api|routes)\/.*\.(ts|js|mjs)$/)
+    (f) => f.match(/[/\\]server[/\\](?:api|routes)[/\\].*\.(ts|js|mjs)$/)
   );
   const routes: RouteInfo[] = [];
 
   for (const file of routeFiles) {
     const content = await readFileSafe(file);
-    const rel = relative(project.root, file);
+    const rel = relative(project.root, file).replace(/\\/g, "/");
 
     // Extract path from file structure
     const pathMatch = rel.match(/server\/((?:api|routes)\/.+)\.(ts|js|mjs)$/);
@@ -1147,4 +1150,51 @@ async function detectRawHttpRoutes(
   }
 
   return routes;
+}
+
+// --- PHP (front-controller pattern: $routes = [...]) ---
+async function detectPHPRoutes(
+  files: string[],
+  project: ProjectInfo
+): Promise<RouteInfo[]> {
+  const phpFiles = files.filter((f) => f.endsWith(".php"));
+  const routes: RouteInfo[] = [];
+
+  for (const file of phpFiles) {
+    const content = await readFileSafe(file);
+    if (!content) continue;
+    const rel = relative(project.root, file).replace(/\\/g, "/");
+
+    // Pattern 1: $routes = ['/' => [...], '/path' => [...]]
+    const routeArrayPattern = /['"](\/[a-zA-Z0-9/_\-{}:.*]*)['"]\s*=>\s*\[/g;
+    let match: RegExpExecArray | null;
+    while ((match = routeArrayPattern.exec(content)) !== null) {
+      const path = match[1];
+      if (path.length > 100) continue;
+      const ctx = content.substring(Math.max(0, match.index - 200), match.index + 200);
+      const methodMatch = ctx.match(/['"]method['"]\s*=>\s*['"](\w+)['"]/i);
+      const method = methodMatch ? methodMatch[1].toUpperCase() : "GET";
+      routes.push({ method, path, file: rel, tags: detectTags(content), framework: "php" });
+    }
+
+    // Pattern 2: router->get('/path'), router->post('/path')
+    const routerPattern = /(?:->|::)\s*(get|post|put|patch|delete|any)\s*\(\s*['"](\/[a-zA-Z0-9/_\-{}:.*]*)['"]/gi;
+    while ((match = routerPattern.exec(content)) !== null) {
+      routes.push({
+        method: match[1].toUpperCase() === "ANY" ? "ALL" : match[1].toUpperCase(),
+        path: match[2],
+        file: rel,
+        tags: detectTags(content),
+        framework: "php",
+      });
+    }
+  }
+
+  const seen = new Set<string>();
+  return routes.filter((r) => {
+    const key = `${r.method}:${r.path}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }

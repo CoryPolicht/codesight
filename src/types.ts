@@ -26,6 +26,7 @@ export type Framework =
   | "actix"
   | "axum"
   | "raw-http"
+  | "php"
   | "unknown";
 
 export type ORM = "drizzle" | "prisma" | "typeorm" | "sqlalchemy" | "gorm" | "mongoose" | "sequelize" | "activerecord" | "ecto" | "unknown";

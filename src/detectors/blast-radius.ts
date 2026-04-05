@@ -11,6 +11,11 @@ export function analyzeBlastRadius(
 ): BlastRadiusResult {
   const { graph, routes, schemas, middleware } = result;
 
+  // Normalize path separators to match whatever convention graph edges use
+  const sep = graph.edges.length > 0 && graph.edges[0].from.includes("\\") ? "\\" : "/";
+  const normPath = (p: string) => sep === "\\" ? p.replace(/\//g, "\\") : p.replace(/\\/g, "/");
+  filePath = normPath(filePath);
+
   // Build reverse adjacency map: file -> files that import it
   const importedBy = new Map<string, Set<string>>();
   // Build forward adjacency map: file -> files it imports
@@ -92,6 +97,10 @@ export function analyzeMultiFileBlastRadius(
   const combinedRoutes: ScanResult["routes"] = [];
   const combinedModels = new Set<string>();
   const combinedMiddleware = new Set<string>();
+
+  const sep = result.graph.edges.length > 0 && result.graph.edges[0].from.includes("\\") ? "\\" : "/";
+  const normPath = (p: string) => sep === "\\" ? p.replace(/\//g, "\\") : p.replace(/\\/g, "/");
+  files = files.map(normPath);
 
   for (const file of files) {
     const br = analyzeBlastRadius(file, result, maxDepth);

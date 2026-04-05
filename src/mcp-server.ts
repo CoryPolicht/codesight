@@ -479,9 +479,25 @@ async function handleRequest(req: JsonRpcRequest) {
 
 export async function startMCPServer() {
   let buffer = "";
+  const messageQueue: JsonRpcRequest[] = [];
+  let processing = false;
+
+  async function processQueue() {
+    if (processing) return;
+    processing = true;
+    while (messageQueue.length > 0) {
+      const req = messageQueue.shift()!;
+      try {
+        await handleRequest(req);
+      } catch {
+        send({ jsonrpc: "2.0", id: null, error: { code: -32700, message: "Parse error" } });
+      }
+    }
+    processing = false;
+  }
 
   process.stdin.setEncoding("utf-8");
-  process.stdin.on("data", async (chunk: string) => {
+  process.stdin.on("data", (chunk: string) => {
     buffer += chunk;
 
     while (true) {
@@ -505,15 +521,13 @@ export async function startMCPServer() {
 
       try {
         const req = JSON.parse(body) as JsonRpcRequest;
-        await handleRequest(req);
-      } catch (err: any) {
-        send({
-          jsonrpc: "2.0",
-          id: null,
-          error: { code: -32700, message: "Parse error" },
-        });
+        messageQueue.push(req);
+      } catch {
+        send({ jsonrpc: "2.0", id: null, error: { code: -32700, message: "Parse error" } });
       }
     }
+
+    processQueue();
   });
 
   await new Promise(() => {});
