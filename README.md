@@ -102,29 +102,51 @@ The key difference from general-purpose wiki tools: codesight already knows your
 
 Every number below comes from running `codesight v1.6.0` on real production codebases. Numbers are verified against actual source — route counts cross-checked against source files, models verified against ORM schema definitions.
 
+### Three-Level Token Reduction
+
+codesight saves tokens at two distinct layers. The wiki (v1.6.0) adds a second layer on top of the base savings:
+
+| Project | Manual exploration | codesight scan | codesight --wiki (targeted) | **Total reduction** |
+|---|---|---|---|---|
+| **SaaS A** | 46,020 tokens | 3,945 tokens (11.7x) | ~550 tokens | **83.7x** |
+| **SaaS B** | 26,130 tokens | 2,865 tokens (9.1x) | ~440 tokens | **59.4x** |
+| **SaaS C** | 47,450 tokens | 3,129 tokens (15.2x) | ~360 tokens | **131.8x** |
+
+**Average combined reduction: 91x.** The wiki's "targeted" number = reading `index.md` at session start (~200 tokens) + one relevant article (~160-350 tokens depending on project). Your AI never loads the full context map for targeted questions.
+
+The two savings layers are independent and compound:
+
+**Layer 1 — codesight scan** eliminates manual file exploration. Instead of your AI running glob/grep/read across 40-138 files to understand the project, it reads one pre-compiled map.
+
+**Layer 2 — `--wiki`** eliminates loading the full map for every question. Instead of loading 3K-5K tokens of full context at session start, your AI reads a 200-token index and pulls the one relevant article (~160-350 tokens) for each question.
+
+```
+Without codesight:   AI reads 26K-47K tokens per session exploring files
+With codesight:      AI reads ~3K-5K tokens (the compiled map)
+With --wiki:         AI reads ~200 tokens at start + ~300 per targeted question
+```
+
+### Base Scan Results
+
 | Project | Stack | Files | Routes | Models | Components | Output Tokens | Exploration Tokens | Savings | Scan Time |
 |---|---|---|---|---|---|---|---|---|---|
 | **SaaS A** | raw-http + Drizzle | 53 | 38 | 12 | 0 | 3,945 | 46,020 | **11.7x** | 184ms |
 | **SaaS B** | Hono + Drizzle, 3 workspaces | 40 | 13 | 8 | 10 | 2,865 | 26,130 | **9.1x** | 203ms |
 | **SaaS C** | FastAPI (Python) | 138 | 56 | 0 | 0 | 3,129 | 47,450 | **15.2x** | 893ms |
 
-**Average: 12.0x token reduction.** Your AI reads ~3K-5K tokens instead of burning ~26K-47K exploring files.
-
 SaaS C has 0 models because it uses Pydantic validators (request/response schemas), not a SQL ORM. This is correct detection, not a false negative.
 
 ![Token comparison: Without codesight (46K-66K tokens) vs With codesight (3K-5K tokens)](assets/token-comparison.jpg)
 
-### Wiki Token Savings (v1.6.0)
+### Wiki Breakdown (v1.6.0)
 
-With `--wiki`, targeted questions cost far fewer tokens than loading the full context map:
-
-| Project | Full CODESIGHT.md | Wiki Index (session start) | Targeted article | Wiki articles |
+| Project | Full CODESIGHT.md | Wiki index only | Index + 1 article | Wiki articles generated |
 |---|---|---|---|---|
-| **SaaS A** | 3,945 tokens | ~200 tokens | ~350 tokens | 9 articles |
-| **SaaS B** | 2,865 tokens | ~200 tokens | ~240 tokens | 11 articles |
-| **SaaS C** | 3,129 tokens | ~200 tokens | ~160 tokens | 17 articles |
+| **SaaS A** | 3,945 tokens | ~200 tokens | ~550 tokens | 9 |
+| **SaaS B** | 2,865 tokens | ~200 tokens | ~440 tokens | 11 |
+| **SaaS C** | 3,129 tokens | ~200 tokens | ~360 tokens | 17 |
 
-"How does auth work?" goes from loading 3,945 tokens to reading `auth.md` (~350 tokens) — a **11x improvement on targeted queries**.
+"How does auth work?" — without wiki: loads 3,945 tokens. With wiki: reads `auth.md` (~350 tokens). **11x improvement per targeted question, 84x total vs manual.**
 
 ### Detection Accuracy
 
