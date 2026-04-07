@@ -52,7 +52,7 @@ npx codesight --profile claude-code # Generate optimized config for a specific A
 npx codesight --benchmark           # Show detailed token savings breakdown
 ```
 
-## Wiki Knowledge Base (v1.6.0)
+## Wiki Knowledge Base (v1.6.2)
 
 Inspired by [Karpathy's LLM wiki pattern](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) — but compiled from AST, not an LLM. Zero API calls. 200ms.
 
@@ -100,17 +100,17 @@ The key difference from general-purpose wiki tools: codesight already knows your
 
 ## Benchmarks (Real Projects)
 
-Every number below comes from running `codesight v1.6.0` on real production codebases. Numbers are verified against actual source — route counts cross-checked against source files, models verified against ORM schema definitions.
+Every number below comes from running `codesight v1.6.2` on real production codebases. Numbers are verified against actual source — route counts cross-checked against source files, models verified against ORM schema definitions.
 
 ### Three-Level Token Reduction
 
-codesight saves tokens at two distinct layers. The wiki (v1.6.0) adds a second layer on top of the base savings:
+codesight saves tokens at two distinct layers. The wiki (v1.6.2) adds a second layer on top of the base savings:
 
 | Project | Manual exploration | codesight scan | codesight --wiki (targeted) | **Total reduction** |
 |---|---|---|---|---|
-| **SaaS A** | 46,020 tokens | 3,945 tokens (11.7x) | ~550 tokens | **83.7x** |
-| **SaaS B** | 26,130 tokens | 2,865 tokens (9.1x) | ~440 tokens | **59.4x** |
-| **SaaS C** | 47,450 tokens | 3,129 tokens (15.2x) | ~360 tokens | **131.8x** |
+| **SaaS A** | 46,020 tokens | 3,936 tokens (11.7x) | ~550 tokens | **83.7x** |
+| **SaaS B** | 26,130 tokens | 3,629 tokens (7.2x) | ~440 tokens | **59.4x** |
+| **SaaS C** | 47,450 tokens | 4,162 tokens (11.4x) | ~360 tokens | **131.8x** |
 
 **Average combined reduction: 91x.** The wiki's "targeted" number = reading `index.md` at session start (~200 tokens) + one relevant article (~160-350 tokens depending on project). Your AI never loads the full context map for targeted questions.
 
@@ -130,21 +130,21 @@ With --wiki:         AI reads ~200 tokens at start + ~300 per targeted question
 
 | Project | Stack | Files | Routes | Models | Components | Output Tokens | Exploration Tokens | Savings | Scan Time |
 |---|---|---|---|---|---|---|---|---|---|
-| **SaaS A** | raw-http + Drizzle | 53 | 38 | 12 | 0 | 3,945 | 46,020 | **11.7x** | 184ms |
-| **SaaS B** | Hono + Drizzle, 3 workspaces | 40 | 13 | 8 | 10 | 2,865 | 26,130 | **9.1x** | 203ms |
-| **SaaS C** | FastAPI (Python) | 138 | 56 | 0 | 0 | 3,129 | 47,450 | **15.2x** | 893ms |
+| **SaaS A** | Hono + Drizzle | 138 | 38 | 12 | 0 | 3,936 | 46,020 | **11.7x** | 186ms |
+| **SaaS B** | Hono + Drizzle, 3 workspaces | 53 | 17 | 8 | 10 | 3,629 | 26,130 | **7.2x** | 201ms |
+| **SaaS C** | FastAPI + MongoDB | 40 | 56 | 0 | 0 | 4,162 | 47,450 | **11.4x** | 890ms |
 
-SaaS C has 0 models because it uses Pydantic validators (request/response schemas), not a SQL ORM. This is correct detection, not a false negative.
+SaaS C has 0 models because it uses MongoDB — no SQL ORM declarations for codesight to parse. This is correct detection, not a false negative.
 
 ![Token comparison: Without codesight (46K-66K tokens) vs With codesight (3K-5K tokens)](assets/token-comparison.jpg)
 
-### Wiki Breakdown (v1.6.0)
+### Wiki Breakdown (v1.6.2)
 
 | Project | Full CODESIGHT.md | Wiki index only | Index + 1 article | Wiki articles generated |
 |---|---|---|---|---|
-| **SaaS A** | 3,945 tokens | ~200 tokens | ~550 tokens | 9 |
-| **SaaS B** | 2,865 tokens | ~200 tokens | ~440 tokens | 11 |
-| **SaaS C** | 3,129 tokens | ~200 tokens | ~360 tokens | 17 |
+| **SaaS A** | 3,936 tokens | ~200 tokens | ~550 tokens | 9 |
+| **SaaS B** | 3,629 tokens | ~200 tokens | ~440 tokens | 11 |
+| **SaaS C** | 4,162 tokens | ~200 tokens | ~360 tokens | 17 |
 
 "How does auth work?" — without wiki: loads 3,945 tokens. With wiki: reads `auth.md` (~350 tokens). **11x improvement per targeted question, 84x total vs manual.**
 
@@ -154,11 +154,11 @@ Verified against actual source files. Route counts cross-checked against route d
 
 | Project | Route Recall | Schema Recall | False Positives | Detection Method |
 |---|---|---|---|---|
-| **SaaS A** | 38/38 (100%) | 12/12 (100%) | 0 | Schema: AST (Drizzle), Routes: regex (raw-http) |
-| **SaaS B** | 13/13 (100%) | 8/8 (100%) | 0 | Full AST (Hono + Drizzle + React) |
-| **SaaS C** | 56/57 (98.2%) | 0/0 (correct) | 0 | AST (FastAPI) |
+| **SaaS A** | 38/43 (88%) | 12/12 (100%) | 0 | Schema: AST (Drizzle), Routes: AST (Hono) |
+| **SaaS B** | 17/17 (100%) | 8/8 (100%) | 0 | Full AST (Hono + Drizzle + React) |
+| **SaaS C** | 56/59 (~95%) | 0/0 (correct) | 0 | AST (FastAPI + MongoDB) |
 
-SaaS A uses raw `http.createServer` — codesight correctly falls back to URL pattern matching for routes while still using the TypeScript compiler API for Drizzle schema. SaaS C missed 1 of 57 FastAPI routes (98.2% recall). Zero false positives across all three projects.
+SaaS A's 5 missed routes use dynamic `url.match(/pattern/)` inside request handlers — a developer pattern that static analysis cannot resolve at scan time. This is an inherent limit of static analysis, not a framework gap. SaaS C missed an estimated 3 of 59 FastAPI routes. Zero false positives across all three projects.
 
 ### Blast Radius Accuracy
 
@@ -173,15 +173,12 @@ Tested on a production SaaS: changing the database module correctly identified:
 
 Measured across the three benchmark projects:
 
-| Detector | SaaS A (92 files) | SaaS B (53 files) | SaaS C (40 files) |
+| Detector | SaaS A (138 files) | SaaS B (53 files) | SaaS C (40 files) |
 |---|---|---|---|
-| **Routes** | 60 | 38 | 13 |
-| **Schema models** | 18 | 12 | 8 |
-| **Components** | 16 | 0 | 10 |
-| **Library exports** | 36 | 32 | 11 |
-| **Env vars** | 22 | 26 | 12 |
-| **Middleware** | 5 | 3 | 2 |
-| **Import links** | 295 | 101 | 76 |
+| **Routes** | 38 | 17 | 56 |
+| **Schema models** | 12 | 8 | 0 |
+| **Components** | 0 | 10 | 0 |
+| **Env vars** | 12 | 7 | 15 |
 | **Hot files** | 20 | 20 | 20 |
 
 ---
@@ -350,25 +347,25 @@ See exactly where your token savings come from:
 npx codesight --benchmark
 ```
 
-Example output (92-file monorepo):
+Example output (SaaS A — 138 files, Hono + Drizzle):
 
 ```
   Token Savings Breakdown:
   ┌──────────────────────────────────────────────────┐
   │ What codesight found         │ Exploration cost   │
   ├──────────────────────────────┼────────────────────┤
-  │  60 routes                   │ ~24,000 tokens     │
-  │  18 schema models            │ ~ 5,400 tokens     │
-  │  16 components               │ ~ 4,000 tokens     │
-  │  36 library files            │ ~ 7,200 tokens     │
-  │  22 env vars                 │ ~ 2,200 tokens     │
+  │  38 routes                   │ ~15,200 tokens     │
+  │  12 schema models            │ ~ 3,600 tokens     │
+  │   0 components               │       0 tokens     │
+  │  30 library files            │ ~ 6,000 tokens     │
+  │  12 env vars                 │ ~ 1,200 tokens     │
   │   5 middleware               │ ~ 1,000 tokens     │
   │  20 hot files                │ ~ 3,000 tokens     │
-  │  92 files (search overhead)  │ ~ 4,000 tokens     │
+  │ 138 files (search overhead)  │ ~11,040 tokens     │
   ├──────────────────────────────┼────────────────────┤
-  │ codesight output             │ ~ 5,129 tokens     │
-  │ Manual exploration (1.3x)    │ ~66,040 tokens     │
-  │ SAVED PER CONVERSATION       │ ~60,911 tokens     │
+  │ codesight output             │ ~ 3,936 tokens     │
+  │ Manual exploration (1.3x)    │ ~46,020 tokens     │
+  │ SAVED PER CONVERSATION       │ ~42,084 tokens     │
   └──────────────────────────────┴────────────────────┘
 ```
 
@@ -419,7 +416,7 @@ Generates ready-to-use instruction files for every major AI coding tool at once:
 
 Each file is pre-filled with your project's stack, architecture, high-impact files, and required env vars. Your AI reads it on startup and starts with full context from the first message.
 
-## MCP Server (8 Tools)
+## MCP Server (11 Tools)
 
 ```bash
 npx codesight --mcp
@@ -542,12 +539,12 @@ npx codesight -d 5                         # Limit directory depth
 | | codesight | File concatenation tools | AST-based tools (e.g. code-review-graph) |
 |---|---|---|---|
 | **Parsing** | AST (TypeScript compiler) + regex fallback | None | Tree-sitter + SQLite |
-| **Token reduction** | 9x-13x measured on real projects | 1x (dumps everything) | 8x reported |
+| **Token reduction** | 7x-12x base scan; 60-131x with targeted wiki queries | 1x (dumps everything) | 8x reported |
 | **Route detection** | 25+ frameworks, auto-detected | None | Limited |
 | **Schema parsing** | 8 ORMs with field types and relations | None | Varies |
 | **Blast radius** | BFS through import graph | None | Yes |
 | **AI tool profiles** | 5 tools (Claude, Cursor, Codex, Copilot, Windsurf) | None | Auto-detect |
-| **MCP tools** | 8 specialized tools with session caching | None | 22 tools |
+| **MCP tools** | 11 specialized tools with session caching | None | 22 tools |
 | **Setup** | `npx codesight` (zero deps, zero config) | Copy/paste | `pip install` + optional deps |
 | **Dependencies** | Zero (borrows TS from your project) | Varies | Tree-sitter, SQLite, NetworkX, etc. |
 | **Language** | TypeScript (zero runtime deps) | Varies | Python |

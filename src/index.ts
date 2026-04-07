@@ -20,7 +20,7 @@ import type { ScanResult } from "./types.js";
 import type { CodesightConfig } from "./types.js";
 import { loadConfig, mergeCliConfig } from "./config.js";
 
-const VERSION = "1.6.2";
+const VERSION = "1.6.3";
 const BRAND = "codesight";
 
 function printHelp() {
@@ -455,7 +455,7 @@ async function main() {
     console.log(`  Index:    ${outputDirName}/wiki/index.md`);
     console.log(`  Log:      ${outputDirName}/wiki/log.md`);
     console.log("");
-    console.log(`  Session tip: read .${outputDirName}/wiki/index.md at session start (~200 tokens)`);
+    console.log(`  Session tip: read ${outputDirName}/wiki/index.md at session start (~200 tokens)`);
     console.log(`  vs full scan: ~${result.tokenStats.outputTokens.toLocaleString()} tokens — load targeted articles instead`);
     console.log("");
   }

@@ -42,13 +42,13 @@ function domainFromFile(file: string): string | null {
     }
   }
   if (containerIdx >= 0 && containerIdx + 1 < parts.length) {
-    const name = parts[containerIdx + 1].replace(/\.(ts|js|mjs|py|go|rb|java|kt)$/, "");
+    const name = parts[containerIdx + 1].replace(/\.(ts|tsx|js|jsx|mjs|cjs|py|go|rb|java|kt)$/, "");
     const generic = new Set(["index", "server", "app", "main", "router", "routes", "api", "handler", "handlers", "base"]);
     if (!generic.has(name) && name.length > 1) return name;
   }
 
   // Fall back to the file's own name
-  const basename = parts[parts.length - 1].replace(/\.(ts|js|mjs|py|go|rb|java|kt)$/, "");
+  const basename = parts[parts.length - 1].replace(/\.(ts|tsx|js|jsx|mjs|cjs|py|go|rb|java|kt)$/, "");
   const generic = new Set([
     "index", "server", "app", "main", "router", "routes", "api",
     "handler", "handlers", "rest", "cli", "server", "dashboard",
