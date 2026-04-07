@@ -114,10 +114,15 @@ export async function detectRoutes(
     }
   }
 
+  // Resolve mount prefixes BEFORE deduplication so routes from different
+  // sub-routers sharing a path (e.g. POST /generate in cv.py AND cover_letter.py)
+  // become distinct after prefix application (POST /api/cv/generate, etc.)
+  const prefixed = await resolveRoutePrefixes(routes, files, project);
+
   // Deduplicate: same method + path from different files/frameworks
   const seen = new Set<string>();
   const deduped: RouteInfo[] = [];
-  for (const route of routes) {
+  for (const route of prefixed) {
     const key = `${route.method}:${route.path}`;
     if (!seen.has(key)) {
       seen.add(key);
@@ -1197,4 +1202,194 @@ async function detectPHPRoutes(
     seen.add(key);
     return true;
   });
+}
+
+// ─── Route Prefix Resolution ──────────────────────────────────────────────────
+//
+// Problem: sub-router routes are extracted with their HANDLER-LEVEL paths.
+// e.g. authRouter.get("/google") shows as GET /google, but is actually GET /auth/google
+// because the router is mounted with app.route("/auth", authRouter).
+//
+// This post-processing step scans main app files for mount registrations and
+// patches route paths BEFORE deduplication. Without this, routes from different
+// sub-routers with the same handler path (e.g. POST /generate in both cv.py and
+// cover_letter.py) collide and one gets silently dropped.
+
+async function resolveRoutePrefixes(
+  routes: RouteInfo[],
+  files: string[],
+  project: ProjectInfo
+): Promise<RouteInfo[]> {
+  // prefixMap: relativeFilePath → mount prefix
+  const prefixMap = new Map<string, string>();
+
+  // Entry point files where mount registrations live
+  const entryFiles = files.filter(f => {
+    const rel = relative(project.root, f).replace(/\\/g, "/");
+    return (
+      /^(?:src\/)?(?:index|server|app|main)\.(ts|js|mjs|py)$/.test(rel) ||
+      /^apps\/[^/]+\/(?:src\/)?(?:index|server|app|main)\.(ts|js|mjs)$/.test(rel) ||
+      /^backend\/(?:server|app|main)\.py$/.test(rel)
+    );
+  });
+
+  for (const entryFile of entryFiles) {
+    const content = await readFileSafe(entryFile);
+    const entryRel = relative(project.root, entryFile).replace(/\\/g, "/");
+    const entryDir = entryRel.includes("/") ? entryRel.split("/").slice(0, -1).join("/") : "";
+
+    if (entryFile.endsWith(".py")) {
+      parsePythonPrefixes(content, entryDir, files, project, prefixMap);
+    } else {
+      parseJSPrefixes(content, entryDir, files, project, prefixMap);
+    }
+  }
+
+  if (prefixMap.size === 0) return routes;
+
+  return routes.map(route => {
+    const prefix = prefixMap.get(route.file);
+    if (!prefix || prefix === "/") return route;
+    // Don't double-prefix if path already starts with it
+    if (route.path.startsWith(prefix + "/") || route.path === prefix) return route;
+    const base = prefix.replace(/\/$/, "");
+    const newPath = route.path === "/" ? base : base + route.path;
+    return { ...route, path: newPath };
+  });
+}
+
+/** TypeScript/JavaScript: scan for app.route("/prefix", varName) */
+function parseJSPrefixes(
+  content: string,
+  entryDir: string,
+  files: string[],
+  project: ProjectInfo,
+  prefixMap: Map<string, string>
+): void {
+  // Map: varName → relative source file
+  const importMap = new Map<string, string>();
+
+  // Named imports: import { authRoutes, sitesRoutes as sites } from "./routes/auth"
+  const namedRe = /import\s+\{([^}]+)\}\s+from\s+['"]([^'"]+)['"]/g;
+  let m;
+  while ((m = namedRe.exec(content)) !== null) {
+    const importPath = m[2];
+    const resolved = resolveJSImport(importPath, entryDir, files, project);
+    if (!resolved) continue;
+    for (const part of m[1].split(",")) {
+      const name = (part.includes(" as ") ? part.split(" as ").pop()! : part).trim();
+      if (name && /^\w+$/.test(name)) importMap.set(name, resolved);
+    }
+  }
+
+  // Default imports: import authRoutes from "./routes/auth"
+  const defaultRe = /import\s+(\w+)\s+from\s+['"]([^'"]+)['"]/g;
+  while ((m = defaultRe.exec(content)) !== null) {
+    const resolved = resolveJSImport(m[2], entryDir, files, project);
+    if (resolved) importMap.set(m[1], resolved);
+  }
+
+  // app.route("/prefix", varName) or app.use("/prefix", varName)
+  const mountRe = /\.\s*(?:route|use)\s*\(\s*['"`]([^'"`]+)['"`]\s*,\s*(\w+)/g;
+  while ((m = mountRe.exec(content)) !== null) {
+    const prefix = m[1];
+    const varName = m[2];
+    if (!prefix || prefix === "/" || prefix === "*") continue;
+    const sourceFile = importMap.get(varName);
+    if (sourceFile) prefixMap.set(sourceFile, prefix);
+  }
+}
+
+function resolveJSImport(
+  importPath: string,
+  entryDir: string,
+  files: string[],
+  project: ProjectInfo
+): string | null {
+  if (!importPath.startsWith(".")) return null;
+  const base = entryDir ? `${entryDir}/${importPath}` : importPath;
+  // Normalize: resolve ./ and ..
+  const parts = base.split("/");
+  const norm: string[] = [];
+  for (const p of parts) {
+    if (p === "..") norm.pop();
+    else if (p !== ".") norm.push(p);
+  }
+  // Strip any existing extension before trying all variants
+  // (TypeScript ESM imports use .js for .ts files: import x from "./foo.js" → foo.ts)
+  const stemWithExt = norm.join("/");
+  const stem = stemWithExt.replace(/\.(ts|tsx|js|jsx|mjs|cjs)$/, "");
+
+  // Try all source extensions
+  for (const ext of [".ts", ".tsx", ".js", ".mjs", ".jsx"]) {
+    const candidate = `${stem}${ext}`;
+    const hit = files.find(f => f.replace(/\\/g, "/").endsWith(candidate));
+    if (hit) return relative(project.root, hit).replace(/\\/g, "/");
+  }
+  // Try /index.ts etc
+  for (const ext of [".ts", ".js", ".mjs"]) {
+    const candidate = `${stem}/index${ext}`;
+    const hit = files.find(f => f.replace(/\\/g, "/").endsWith(candidate));
+    if (hit) return relative(project.root, hit).replace(/\\/g, "/");
+  }
+  return null;
+}
+
+/** Python/FastAPI: scan for APIRouter(prefix=...) + include_router() chains */
+function parsePythonPrefixes(
+  content: string,
+  entryDir: string,
+  files: string[],
+  project: ProjectInfo,
+  prefixMap: Map<string, string>
+): void {
+  // Step 1: Build alias map: "auth_router" → "backend/routes/auth.py"
+  //   from routes.auth import router as auth_router
+  const aliasRe = /from\s+([\w.]+)\s+import\s+router\s+as\s+(\w+)/g;
+  const aliasMap = new Map<string, string>(); // alias → source file
+  let m;
+  while ((m = aliasRe.exec(content)) !== null) {
+    const moduleDots = m[1];
+    const alias = m[2];
+    // Convert dotted module to file path (relative or absolute)
+    const modPath = moduleDots.replace(/\./g, "/");
+    // Try to find the file matching this module path
+    const hit = files.find(f => {
+      const rel = f.replace(/\\/g, "/");
+      return rel.endsWith(`/${modPath}.py`) || rel.endsWith(`${modPath}.py`);
+    });
+    if (hit) aliasMap.set(alias, relative(project.root, hit).replace(/\\/g, "/"));
+  }
+
+  // Also handle: from routes.auth import router (no alias)
+  const noAliasRe = /from\s+([\w.]+)\s+import\s+router(?!\s+as)\b/g;
+  while ((m = noAliasRe.exec(content)) !== null) {
+    const modPath = m[1].replace(/\./g, "/");
+    const hit = files.find(f => f.replace(/\\/g, "/").endsWith(`${modPath}.py`));
+    if (hit) aliasMap.set("router", relative(project.root, hit).replace(/\\/g, "/"));
+  }
+
+  // Step 2: Find APIRouter with prefix: api_router = APIRouter(prefix="/api")
+  const prefixRouterRe = /(\w+)\s*=\s*APIRouter\s*\([^)]*prefix\s*=\s*['"]([^'"]+)['"]/g;
+  const routerPrefixes = new Map<string, string>(); // varName → prefix
+  while ((m = prefixRouterRe.exec(content)) !== null) {
+    routerPrefixes.set(m[1], m[2]);
+  }
+
+  // Step 3: Chain include_router calls:
+  // api_router.include_router(auth_router)
+  // api_router.include_router(cv_router, prefix="/cv")
+  const includeRe = /(\w+)\s*\.\s*include_router\s*\(\s*(\w+)(?:[^)]*prefix\s*=\s*['"]([^'"]+)['"])?\s*\)/g;
+  while ((m = includeRe.exec(content)) !== null) {
+    const parentVar = m[1];
+    const childVar = m[2];
+    const extraPrefix = m[3] || "";
+    const parentPrefix = routerPrefixes.get(parentVar) || "";
+    const fullPrefix = parentPrefix + extraPrefix;
+
+    const sourceFile = aliasMap.get(childVar);
+    if (sourceFile && fullPrefix) {
+      prefixMap.set(sourceFile, fullPrefix);
+    }
+  }
 }
