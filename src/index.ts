@@ -15,11 +15,12 @@ import { calculateTokenStats } from "./detectors/tokens.js";
 import { writeOutput } from "./formatter.js";
 import { generateAIConfigs } from "./generators/ai-config.js";
 import { generateHtmlReport } from "./generators/html-report.js";
+import { generateWiki } from "./generators/wiki.js";
 import type { ScanResult } from "./types.js";
 import type { CodesightConfig } from "./types.js";
 import { loadConfig, mergeCliConfig } from "./config.js";
 
-const VERSION = "1.5.3";
+const VERSION = "1.6.0";
 const BRAND = "codesight";
 
 function printHelp() {
@@ -31,6 +32,7 @@ function printHelp() {
   Options:
     -o, --output <dir>   Output directory (default: .codesight)
     -d, --depth <n>      Max directory depth (default: 10)
+    --wiki               Generate wiki knowledge base (.codesight/wiki/)
     --init               Generate AI config files (CLAUDE.md, .cursorrules, etc.)
     --watch              Re-scan on file changes
     --hook               Install git pre-commit hook
@@ -52,6 +54,7 @@ function printHelp() {
 
   Examples:
     npx ${BRAND}                    # Scan current directory
+    npx ${BRAND} --wiki             # Scan + generate wiki knowledge base
     npx ${BRAND} --init             # Scan + generate AI config files
     npx ${BRAND} --open             # Scan + open visual report
     npx ${BRAND} --watch            # Watch mode, re-scan on changes
@@ -212,7 +215,7 @@ async function installGitHook(root: string, outputDirName: string) {
     existingContent = await readFile(hookPath, "utf-8");
   } catch {}
 
-  const hookCommand = `\n# codesight: regenerate AI context\nnpx codesight -o ${outputDirName}\ngit add ${outputDirName}/\n`;
+  const hookCommand = `\n# codesight: regenerate AI context\nnpx codesight --wiki -o ${outputDirName}\ngit add ${outputDirName}/\n`;
 
   if (existingContent.includes("codesight")) {
     console.log("  Git hook already installed.");
@@ -232,7 +235,7 @@ async function installGitHook(root: string, outputDirName: string) {
   console.log(`  Git pre-commit hook installed at .git/hooks/pre-commit`);
 }
 
-async function watchMode(root: string, outputDirName: string, maxDepth: number, userConfig: CodesightConfig = {}) {
+async function watchMode(root: string, outputDirName: string, maxDepth: number, userConfig: CodesightConfig = {}, wikiMode = false) {
   console.log(`  Watching for changes... (Ctrl+C to stop)\n`);
 
   const WATCH_EXTENSIONS = new Set([
@@ -262,7 +265,13 @@ async function watchMode(root: string, outputDirName: string, maxDepth: number, 
     try {
       const fileList = files.length <= 5 ? files.join(", ") : `${files.length} files`;
       console.log(`\n  Changes detected (${fileList}), re-scanning...\n`);
-      await scan(root, outputDirName, maxDepth, userConfig);
+      const watchResult = await scan(root, outputDirName, maxDepth, userConfig);
+      if (wikiMode) {
+        process.stdout.write("  Regenerating wiki...");
+        const outputDir = join(root, outputDirName);
+        const wikiResult = await generateWiki(watchResult, outputDir);
+        console.log(` ${wikiResult.articles.length} articles updated`);
+      }
     } catch (err: any) {
       console.error("  Scan error:", err.message);
     }
@@ -315,6 +324,7 @@ async function main() {
   let outputDirName = ".codesight";
   let maxDepth = 10;
   let jsonOutput = false;
+  let doWiki = false;
   let doInit = false;
   let doWatch = false;
   let doHook = false;
@@ -335,6 +345,8 @@ async function main() {
       maxDepth = parseInt(args[++i], 10);
     } else if (arg === "--json") {
       jsonOutput = true;
+    } else if (arg === "--wiki") {
+      doWiki = true;
     } else if (arg === "--init") {
       doInit = true;
     } else if (arg === "--watch") {
@@ -430,6 +442,22 @@ async function main() {
   // JSON output
   if (jsonOutput) {
     console.log(JSON.stringify(result, null, 2));
+  }
+
+  // Generate wiki knowledge base
+  if (doWiki) {
+    const outputDir = join(root, outputDirName);
+    process.stdout.write("  Generating wiki...");
+    const wikiResult = await generateWiki(result, outputDir);
+    const articleList = wikiResult.articles.join(", ");
+    console.log(` ${outputDirName}/wiki/ (${wikiResult.articles.length} articles, ~${wikiResult.tokenEstimate.toLocaleString()} tokens total)`);
+    console.log(`  Articles: ${articleList}`);
+    console.log(`  Index:    ${outputDirName}/wiki/index.md`);
+    console.log(`  Log:      ${outputDirName}/wiki/log.md`);
+    console.log("");
+    console.log(`  Session tip: read .${outputDirName}/wiki/index.md at session start (~200 tokens)`);
+    console.log(`  vs full scan: ~${result.tokenStats.outputTokens.toLocaleString()} tokens — load targeted articles instead`);
+    console.log("");
   }
 
   // Generate AI config files
@@ -537,7 +565,7 @@ async function main() {
 
   // Watch mode (blocks)
   if (doWatch) {
-    await watchMode(root, outputDirName, maxDepth, config);
+    await watchMode(root, outputDirName, maxDepth, config, doWiki);
   }
 }
 

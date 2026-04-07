@@ -63,6 +63,8 @@ function generateContext(result: ScanResult): string {
     lines.push("");
   }
 
+  // Wiki reference if it exists
+  lines.push("Read .codesight/wiki/index.md for the wiki knowledge base (targeted articles per subsystem).");
   lines.push("Read .codesight/CODESIGHT.md for the complete AI context map including all routes, schema, components, libraries, config, middleware, and dependency graph.");
 
   return lines.join("\n");
@@ -204,8 +206,13 @@ export async function generateProfileConfig(
     case "claude-code": {
       summaryLines.push(`## Instructions for Claude Code\n`);
       summaryLines.push(`Before exploring the repo, read these files in order:`);
-      summaryLines.push(`1. \`.codesight/CODESIGHT.md\` — full context map (routes, schema, components, deps)`);
-      summaryLines.push(`2. Use the codesight MCP server for targeted queries:\n`);
+      summaryLines.push(`1. \`.codesight/wiki/index.md\` — wiki index (~200 tokens), load at session start`);
+      summaryLines.push(`2. \`.codesight/wiki/overview.md\` — architecture overview (~500 tokens)`);
+      summaryLines.push(`3. For domain questions, read the relevant wiki article (e.g. \`.codesight/wiki/auth.md\`)`);
+      summaryLines.push(`4. \`.codesight/CODESIGHT.md\` — full context map for deep exploration\n`);
+      summaryLines.push(`Or use the codesight MCP server for on-demand queries:`);
+      summaryLines.push(`   - \`codesight_get_wiki_article\` — read a specific wiki article by name`);
+      summaryLines.push(`   - \`codesight_get_wiki_index\` — get the wiki index`);
       summaryLines.push(`   - \`codesight_get_summary\` — quick project overview`);
       summaryLines.push(`   - \`codesight_get_routes --prefix /api/users\` — filtered routes`);
       summaryLines.push(`   - \`codesight_get_blast_radius --file src/lib/db.ts\` — impact analysis before changes`);

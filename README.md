@@ -2,7 +2,7 @@
 
 ### Your AI assistant wastes thousands of tokens every conversation just figuring out your project. codesight fixes that in one command.
 
-**Zero dependencies. AST precision. 25+ framework detectors. 8 ORM parsers. 8 MCP tools. One `npx` call.**
+**Zero dependencies. AST precision. 25+ framework detectors. 8 ORM parsers. 11 MCP tools. One `npx` call.**
 
 **Works with TypeScript, JavaScript, Python, Go, Ruby, Elixir, Java, Kotlin, Rust, and PHP.** TypeScript projects get full AST precision. Everything else uses battle-tested regex detection across the same 25+ frameworks.
 
@@ -27,7 +27,7 @@
 ---
 
 ```
-0 dependencies · Node.js >= 18 · 27 tests · 8 MCP tools · MIT
+0 dependencies · Node.js >= 18 · 27 tests · 11 MCP tools · MIT
 ```
 
 ## Works With
@@ -43,13 +43,60 @@ npx codesight
 That's it. Run it in any project root. No config, no setup, no API keys.
 
 ```bash
+npx codesight --wiki                # Generate wiki knowledge base (.codesight/wiki/)
 npx codesight --init                # Generate CLAUDE.md, .cursorrules, codex.md, AGENTS.md
 npx codesight --open                # Open interactive HTML report in browser
-npx codesight --mcp                 # Start as MCP server (8 tools) for Claude Code / Cursor
+npx codesight --mcp                 # Start as MCP server (11 tools) for Claude Code / Cursor
 npx codesight --blast src/lib/db.ts # Show blast radius for a file
 npx codesight --profile claude-code # Generate optimized config for a specific AI tool
 npx codesight --benchmark           # Show detailed token savings breakdown
 ```
+
+## Wiki Knowledge Base (v1.6.0)
+
+Inspired by [Karpathy's LLM wiki pattern](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) — but compiled from AST, not an LLM. Zero API calls. 200ms.
+
+```bash
+npx codesight --wiki
+```
+
+Generates `.codesight/wiki/` — a persistent knowledge base of your codebase that survives across every session:
+
+```
+.codesight/wiki/
+  index.md      — catalog of all articles (~200 tokens) — read this at session start
+  overview.md   — architecture, subsystems, high-impact files (~500 tokens)
+  auth.md       — auth routes, middleware, session flow
+  payments.md   — payment routes, webhook handling, billing flow
+  database.md   — all models, fields, relations, high-impact DB files
+  users.md      — user management routes and related models
+  ui.md         — UI components with props
+  log.md        — append-only record of every wiki operation
+```
+
+**Why this cuts token usage further:**
+
+Instead of loading the full 5K token context map every conversation, your AI reads one targeted article:
+
+| Question | Without wiki | With wiki |
+|---|---|---|
+| "How does auth work?" | ~12K tokens (reads 8+ files) | ~300 tokens (`auth.md`) |
+| "What models exist?" | ~5K tokens (CODESIGHT.md) | ~400 tokens (`database.md`) |
+| New session start | ~5K tokens (full reload) | ~200 tokens (`index.md`) |
+
+**Persistent across sessions.** The wiki lives in `.codesight/wiki/`, committed to git. Every new Claude Code, Cursor, or Codex session starts with full codebase knowledge from the first message.
+
+**Auto-regenerates.** Use `--watch` to keep the wiki current as you code. Use `--hook` to regenerate on every commit.
+
+**3 new MCP tools** for wiki access:
+
+| Tool | What it does |
+|---|---|
+| `codesight_get_wiki_index` | Get the wiki catalog (~200 tokens) at session start |
+| `codesight_get_wiki_article` | Read one article by name: `auth`, `database`, `payments`, etc. |
+| `codesight_lint_wiki` | Health check: orphan articles, missing cross-links, stale content |
+
+The key difference from general-purpose wiki tools: codesight already knows your routes, schema, blast radius, and middleware from AST — no LLM needed to extract code structure. The wiki is a narrative layer on top of data your codebase already contains.
 
 ## Benchmarks (Real Projects)
 
@@ -359,6 +406,9 @@ Runs as a Model Context Protocol server. Claude Code and Cursor call it directly
 
 | Tool | What it does |
 |---|---|
+| `codesight_get_wiki_index` | Wiki catalog (~200 tokens) — read at session start |
+| `codesight_get_wiki_article` | Read one wiki article by name: `auth`, `database`, `payments`, etc. |
+| `codesight_lint_wiki` | Health check: orphan articles, missing cross-links |
 | `codesight_scan` | Full project scan (~3K-5K tokens) |
 | `codesight_get_summary` | Compact overview (~500 tokens) |
 | `codesight_get_routes` | Routes filtered by prefix, tag, or method |
@@ -435,14 +485,16 @@ Context stays fresh without thinking about it.
 ```bash
 npx codesight                              # Scan current directory
 npx codesight ./my-project                 # Scan specific directory
+npx codesight --wiki                       # Generate wiki knowledge base
 npx codesight --init                       # Generate AI config files
 npx codesight --open                       # Open visual HTML report
 npx codesight --html                       # Generate HTML report without opening
-npx codesight --mcp                        # Start MCP server (8 tools)
+npx codesight --mcp                        # Start MCP server (11 tools)
 npx codesight --blast src/lib/db.ts        # Show blast radius for a file
 npx codesight --profile claude-code        # Optimized config for specific tool
-npx codesight --watch                      # Watch mode
-npx codesight --hook                       # Install git pre-commit hook
+npx codesight --watch                      # Watch mode (add --wiki to auto-regenerate wiki)
+npx codesight --wiki --watch               # Watch + auto-regenerate wiki on changes
+npx codesight --hook                       # Install git pre-commit hook (includes wiki)
 npx codesight --benchmark                  # Detailed token savings breakdown
 npx codesight --json                       # Output as JSON
 npx codesight -o .ai-context              # Custom output directory

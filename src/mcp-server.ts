@@ -1,4 +1,4 @@
-import { resolve } from "node:path";
+import { resolve, join } from "node:path";
 import { collectFiles, detectProject } from "./scanner.js";
 import { detectRoutes } from "./detectors/routes.js";
 import { detectSchemas } from "./detectors/schema.js";
@@ -11,6 +11,7 @@ import { enrichRouteContracts } from "./detectors/contracts.js";
 import { calculateTokenStats } from "./detectors/tokens.js";
 import { writeOutput } from "./formatter.js";
 import { analyzeBlastRadius, analyzeMultiFileBlastRadius } from "./detectors/blast-radius.js";
+import { readWikiArticle, listWikiArticles, lintWiki } from "./generators/wiki.js";
 import type { ScanResult } from "./types.js";
 
 /**
@@ -287,6 +288,38 @@ async function toolRefresh(args: any): Promise<string> {
   return `Refreshed. ${result.routes.length} routes, ${result.schemas.length} models, ${result.graph.edges.length} import links, ${result.config.envVars.length} env vars.`;
 }
 
+async function toolGetWikiIndex(args: any): Promise<string> {
+  const result = await getScanResult(args.directory);
+  const outputDir = join(cachedRoot!, ".codesight");
+  const index = await readWikiArticle(outputDir, "index");
+  if (index) return index;
+
+  // Wiki not generated yet — return a summary pointing to --wiki
+  return `Wiki not generated yet. Run \`npx codesight --wiki\` to generate the knowledge base.\n\nFor now, use codesight_get_summary for a quick overview.\n\nProject: ${result.project.name} | ${result.routes.length} routes | ${result.schemas.length} models`;
+}
+
+async function toolGetWikiArticle(args: any): Promise<string> {
+  if (!args.article) return "Error: provide 'article' parameter (e.g., 'overview', 'auth', 'database', 'payments')";
+  await getScanResult(args.directory);
+  const outputDir = join(cachedRoot!, ".codesight");
+
+  const content = await readWikiArticle(outputDir, args.article);
+  if (content) return content;
+
+  // Article not found — list available ones
+  const available = await listWikiArticles(outputDir);
+  if (available.length === 0) {
+    return `Wiki not generated. Run \`npx codesight --wiki\` first.\nAvailable articles will include: overview, database, auth, payments, and one per API domain.`;
+  }
+  return `Article '${args.article}' not found.\nAvailable articles: ${available.join(", ")}`;
+}
+
+async function toolLintWiki(args: any): Promise<string> {
+  const result = await getScanResult(args.directory);
+  const outputDir = join(cachedRoot!, ".codesight");
+  return lintWiki(result, outputDir);
+}
+
 // =================== TOOL DEFINITIONS ===================
 
 const TOOLS = [
@@ -394,6 +427,48 @@ const TOOLS = [
       },
     },
     handler: toolRefresh,
+  },
+  {
+    name: "codesight_get_wiki_index",
+    description:
+      "Get the wiki index (~200 tokens). Lists all available wiki articles with one-line summaries. Read this at session start for instant project orientation. If wiki not generated, run `npx codesight --wiki` first.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        directory: { type: "string", description: "Directory (defaults to cwd)" },
+      },
+    },
+    handler: toolGetWikiIndex,
+  },
+  {
+    name: "codesight_get_wiki_article",
+    description:
+      "Read a specific wiki article by name. Each article covers one subsystem in narrative form (~300-500 tokens). Use for targeted questions: 'how does auth work?' → article='auth', 'what models exist?' → article='database', 'what routes are there?' → article='api'. Much cheaper than loading the full context map.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        directory: { type: "string", description: "Directory (defaults to cwd)" },
+        article: {
+          type: "string",
+          description:
+            "Article name without .md extension (e.g. 'overview', 'auth', 'payments', 'database', 'ui', or any domain name)",
+        },
+      },
+      required: ["article"],
+    },
+    handler: toolGetWikiArticle,
+  },
+  {
+    name: "codesight_lint_wiki",
+    description:
+      "Health check the wiki. Finds orphan articles, missing cross-links, and articles that may be stale. Run after making significant changes to verify wiki integrity.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        directory: { type: "string", description: "Directory (defaults to cwd)" },
+      },
+    },
+    handler: toolLintWiki,
   },
 ];
 
