@@ -216,7 +216,7 @@ async function detectFrameworks(
   pkg: Record<string, any>
 ): Promise<Framework[]> {
   const deps = { ...pkg.dependencies, ...pkg.devDependencies };
-  const frameworks: Framework[] = [];
+  let frameworks: Framework[] = [];
 
   // Next.js
   if (deps["next"]) {
@@ -397,6 +397,12 @@ async function detectFrameworks(
     frameworks.push("raw-http");
   }
 
+  // Remove go-net-http if a specific Go framework was also detected
+  const specificGoFrameworks = new Set(["gin", "fiber", "echo", "chi"]);
+  if (frameworks.some((f) => specificGoFrameworks.has(f))) {
+    frameworks = frameworks.filter((f) => f !== "go-net-http");
+  }
+
   return frameworks;
 }
 
@@ -485,7 +491,15 @@ async function detectLanguage(
   const hasGemfile = await fileExists(join(root, "Gemfile"));
   const hasMixExs = await fileExists(join(root, "mix.exs"));
   const hasPomXml = await fileExists(join(root, "pom.xml"));
-  const hasBuildGradle = await fileExists(join(root, "build.gradle")) || await fileExists(join(root, "build.gradle.kts"));
+  const hasBuildGradleKts = await fileExists(join(root, "build.gradle.kts"));
+  const hasBuildGradle = hasBuildGradleKts || await fileExists(join(root, "build.gradle"));
+  const isKotlinProject = hasBuildGradleKts || await fileExists(join(root, "src/main/kotlin")) ||
+    await (async () => {
+      try {
+        const gradle = await readFile(join(root, "build.gradle"), "utf-8");
+        return gradle.includes("kotlin(") || gradle.includes("org.jetbrains.kotlin");
+      } catch { return false; }
+    })();
   const hasCargoToml = await fileExists(join(root, "Cargo.toml"));
   const hasComposerJson = await fileExists(join(root, "composer.json"));
   const hasPubspec = await fileExists(join(root, "pubspec.yaml"));
@@ -500,8 +514,8 @@ async function detectLanguage(
   if (hasGoMod) langs.push("go");
   if (hasGemfile) langs.push("ruby");
   if (hasMixExs) langs.push("elixir");
-  if (hasBuildGradle) langs.push("kotlin");
-  else if (hasPomXml) langs.push("java");
+  if (hasBuildGradle && isKotlinProject) langs.push("kotlin");
+  else if (hasBuildGradle || hasPomXml) langs.push("java");
   if (hasCargoToml) langs.push("rust");
   if (hasComposerJson) langs.push("php");
   if (hasPubspec) langs.push("dart");
@@ -652,6 +666,27 @@ async function getWorkspacePatterns(
   return [];
 }
 
+async function parsePythonRequirements(content: string, root: string, deps: string[]): Promise<void> {
+  for (const line of content.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    // Follow -r includes one level deep
+    const includeMatch = trimmed.match(/^-r\s+(.+)/);
+    if (includeMatch) {
+      try {
+        const included = await readFile(join(root, includeMatch[1].trim()), "utf-8");
+        for (const subLine of included.split("\n")) {
+          const name = subLine.split(/[>=<\[#]/)[0].trim().toLowerCase().replace(/-/g, "-");
+          if (name && !name.startsWith("-") && !deps.includes(name)) deps.push(name);
+        }
+      } catch {}
+      continue;
+    }
+    const name = trimmed.split(/[>=<\[#]/)[0].trim().toLowerCase();
+    if (name && !name.startsWith("-") && !deps.includes(name)) deps.push(name);
+  }
+}
+
 async function getPythonDeps(root: string): Promise<string[]> {
   const deps: string[] = [];
   // Check root and common subdirectories
@@ -659,9 +694,23 @@ async function getPythonDeps(root: string): Promise<string[]> {
   for (const dir of searchDirs) {
     try {
       const req = await readFile(join(dir, "requirements.txt"), "utf-8");
-      for (const line of req.split("\n")) {
-        const name = line.split(/[>=<\[]/)[0].trim().toLowerCase();
-        if (name && !deps.includes(name)) deps.push(name);
+      await parsePythonRequirements(req, dir, deps);
+    } catch {}
+    // Pipfile support (poetry-style, older Flask/Python projects)
+    try {
+      const pipfile = await readFile(join(dir, "Pipfile"), "utf-8");
+      let inPackages = false;
+      for (const line of pipfile.split("\n")) {
+        const trimmed = line.trim();
+        if (trimmed === "[packages]" || trimmed === "[dev-packages]") {
+          inPackages = trimmed === "[packages]";
+          continue;
+        }
+        if (trimmed.startsWith("[")) { inPackages = false; continue; }
+        if (inPackages && trimmed.includes("=")) {
+          const name = trimmed.split("=")[0].trim().toLowerCase().replace(/_/g, "-");
+          if (name && !name.startsWith("#") && !deps.includes(name)) deps.push(name);
+        }
       }
     } catch {}
     try {
@@ -703,7 +752,12 @@ async function getGoDeps(root: string): Promise<string[]> {
   try {
     const gomod = await readFile(join(root, "go.mod"), "utf-8");
     for (const line of gomod.split("\n")) {
-      const match = line.match(/^\s*([\w./-]+)\s+v/);
+      // Block format:  \t github.com/pkg/name v1.2.3
+      let match = line.match(/^\s+([\w./-]+)\s+v/);
+      if (!match) {
+        // Single-line format: require github.com/pkg/name v1.2.3
+        match = line.match(/^require\s+([\w./-]+)\s+v/);
+      }
       if (match) deps.push(match[1]);
     }
     // Check for net/http usage in main.go

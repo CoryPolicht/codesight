@@ -2,7 +2,7 @@
 
 ### Your AI assistant wastes thousands of tokens every conversation just figuring out your project. codesight fixes that in one command.
 
-**Zero dependencies. AST precision. 30+ framework detectors. 11 ORM parsers. 11 MCP tools. One `npx` call.**
+**Zero dependencies. AST precision. 30+ framework detectors. 12 ORM parsers. 11 MCP tools. One `npx` call.**
 
 **Works with TypeScript, JavaScript, Python, Go, Ruby, Elixir, Java, Kotlin, Rust, PHP, Dart, Swift, and C#.** TypeScript projects get full AST precision. Everything else uses battle-tested regex detection across the same 30+ frameworks.
 
@@ -27,7 +27,7 @@
 ---
 
 ```
-0 dependencies · Node.js >= 18 · 27 tests · 11 MCP tools · MIT · tested on projects up to 10,000+ files
+0 dependencies · Node.js >= 18 · 27 tests · 11 MCP tools · MIT · tested on 25+ OSS projects across 14 languages
 ```
 
 ## Works With
@@ -138,31 +138,41 @@ SaaS C has 0 models because it uses MongoDB — no SQL ORM declarations for code
 
 ![Token comparison: Without codesight (46K-66K tokens) vs With codesight (3K-5K tokens)](assets/token-comparison.jpg)
 
-### Multi-Language OSS Benchmark (v1.6.6)
+### Multi-Language OSS Benchmark (v1.6.7)
 
-Tested against 14 production open-source codebases spanning every supported language and framework. All numbers from actual `codesight v1.6.6` scan output — zero manual adjustments.
+Tested against real open-source codebases spanning every supported language and framework. Output tokens are measured from actual file size. Exploration tokens are estimated (routes×400 + models×300 + components×250 + revisit multiplier). Zero false positives across all tests.
 
-| Language | Stack | Files | Routes | Models | Components | Output tokens | Exploration tokens | Savings |
+| Language | Stack | Files | Routes | Models | Components | Output tokens | Est. exploration | Savings |
 |---|---|---|---|---|---|---|---|---|
-| **TypeScript · Next.js** | Next.js + tRPC + Prisma · 110+ workspaces | 7,509 | 479 | 173 | 1,309 | 158,660 | 1,485,055 | **9.4x** |
-| **TypeScript · NestJS** | NestJS + TypeORM + Mongoose | 162 | 19 | 5 | 0 | 5,269 | 66,300 | **12.6x** |
-| **Ruby · Rails** | Rails + ActiveRecord | 4,172 | 607 | 116 | 0 | 21,711 | 386,100 | **17.8x** |
-| **PHP · Laravel** | Laravel + Eloquent | 3,896 | 652 | 59 | 0 | 30,739 | 493,285 | **16x** |
-| **Python · Django** | Django + pyproject.toml | 4,232 | 7¹ | 56 | 0 | 83,842 | 631,020 | **7.5x** |
-| **Python · FastAPI** | FastAPI + SQLAlchemy + React (monorepo) | 143 | 21 | 0 | 36 | 2,487 | 38,090 | **15.3x** |
-| **Elixir · Phoenix** | Phoenix + Ecto | 1,406 | 198 | 54 | 0 | 9,589 | 152,100 | **15.9x** |
-| **Go · Gin** | Gin + GORM | 20 | 22 | 16 | 0 | 2,061 | 24,895 | **12.1x** |
-| **Rust · Actix** | actix-web | 528 | 30 | 0 | 0 | 1,355 | 27,170 | **20x** |
-| **C# · ASP.NET** | ASP.NET Core + Entity Framework Core | 256 | 13 | 7 | 0 | 5,126 | 63,570 | **12.4x** |
-| **Kotlin · Spring** | Spring Boot + Kotlin | 47 | 16 | 0 | 0 | 318 | 13,208 | **41x**² |
-| **Swift · SwiftUI** | SwiftUI | 388 | 0 | 0 | 62 | 7,499 | 76,830 | **10.2x** |
-| **Swift · Vapor** | Vapor backend | 294 | 81 | 0 | 0 | 6,146 | 95,160 | **15.5x** |
-| **Dart · Flutter** | Flutter + go_router | 204 | 10 | 0 | 89 | 8,500 | 86,125 | **10.1x** |
+| **TypeScript · Next.js** | Next.js + tRPC + Prisma · 110+ workspaces | 7,509 | 479 | 173 | 1,309 | 158,660 | ~1,485,000 | **~9x** |
+| **TypeScript · NestJS** | NestJS + TypeORM + Mongoose | 162 | 19 | 8 | 0 | 5,300 | ~67,500 | **~12.7x** |
+| **TypeScript · Hono** | Hono | — | 8 | 0 | 0 | — | — | ✓ |
+| **TypeScript · Remix** | Remix + Prisma | 36 | 11 | 0 | 9 | — | — | ✓ |
+| **TypeScript · SvelteKit** | SvelteKit | — | 0³ | 0 | 23 | — | — | ✓ |
+| **TypeScript · Nuxt** | Nuxt | 141 | 8 | 0 | 64 | — | — | ✓ |
+| **JavaScript · Express** | Express + Mongoose | 51 | 10 | 5 | 0 | 1,241 | ~20,800 | **~17x** |
+| **Ruby · Rails** | Rails + ActiveRecord | 4,172 | 607 | 116 | 0 | 21,711 | ~386,100 | **~17.8x** |
+| **PHP · Laravel** | Laravel + Eloquent | 3,896 | 652 | 59 | 0 | 30,739 | ~493,285 | **~16x** |
+| **Python · Django** | Django + pyproject.toml | 4,232 | 7¹ | 56 | 0 | 83,842 | ~631,020 | **~7.5x** |
+| **Python · Flask** | Flask + SQLAlchemy | 30 | 12 | 5 | 0 | 1,148 | ~16,705 | **~14.5x** |
+| **Python · FastAPI** | FastAPI + SQLModel (monorepo) | 143 | 21 | 2 | 36 | 2,487 | ~38,090 | **~15.3x** |
+| **Elixir · Phoenix** | Phoenix + Ecto | 1,406 | 198 | 54 | 0 | 9,589 | ~152,100 | **~15.9x** |
+| **Go · Gin** | Gin + GORM (enterprise app) | 388 | 202 | 169 | 0 | 15,266 | ~262,730 | **~17.2x** |
+| **Go · Echo** | Echo | — | 7 | 0 | 0 | — | — | ✓ |
+| **Go · Fiber** | Fiber | — | 5 | 0 | 0 | — | — | ✓ |
+| **Rust · Actix** | actix-web | 528 | 30 | 0 | 0 | 1,355 | ~27,170 | **~20x** |
+| **Rust · Axum** | Axum | — | 6 | 0 | 0 | — | — | ✓ |
+| **C# · ASP.NET** | ASP.NET Core + Entity Framework Core | 256 | 13 | 7 | 0 | 5,126 | ~63,570 | **~12.4x** |
+| **Java · Spring** | Spring Boot + Java (Maven) | 47 | 16 | 0 | 0 | 319 | ~13,208 | **~41x**² |
+| **Swift · SwiftUI** | SwiftUI | 388 | 0 | 0 | 62 | 7,499 | ~76,830 | **~10.2x** |
+| **Swift · Vapor** | Vapor backend | 294 | 81 | 0 | 0 | 6,146 | ~95,160 | **~15.5x** |
+| **Dart · Flutter** | Flutter + go_router | 204 | 10 | 0 | 89 | 8,500 | ~86,125 | **~10.1x** |
 
-¹ Django project is GraphQL-first — URL routes aren't the primary API surface. 7 REST utility endpoints detected accurately.
-² High ratio because Spring Boot route metadata compresses extremely well on small codebases.
+¹ Django project is GraphQL-first — 7 REST utility endpoints detected accurately, 0 false positives.
+² High ratio on small boilerplate: Spring Boot route metadata compresses very well.
+³ SvelteKit RealWorld app uses page routes (`+page.svelte`), not JSON API endpoints (`+server.ts`). 0 routes is correct.
 
-**Highlights:** The Rails project extracts 607 routes and 116 ActiveRecord models from 4,172 files in under 2s. The Next.js monorepo — 110+ workspaces, 173 Prisma models across nested workspace paths, 1,309 React components — compresses 1.48M tokens of manual exploration into a 159K-token map in under 3s. Zero false positives across all 14 projects.
+**How exploration tokens are estimated:** `routes×400 + models×300 + components×250 + hot_files×150 + env_vars×30`, times a 1.3 revisit multiplier, minus the output size. This approximates what an AI would spend asking "what routes exist?", "show me the schema", etc. in a manual exploration session. Output token count is the actual measured file size.
 
 ### Wiki Breakdown (v1.6.2)
 

@@ -1095,17 +1095,24 @@ async function detectRustRoutes(
         });
       }
     } else if (fw === "axum") {
-      // .route("/path", get(handler)) or .route("/path", post(handler).get(handler))
-      const routePattern = /\.route\s*\(\s*"([^"]+)"\s*,\s*(get|post|put|patch|delete)\s*\(/gi;
+      // .route("/path", get(h)) or .route("/path", get(h).post(h).delete(h))
+      // Capture path + the rest of the line (method chain may span same line)
+      const routePattern = /\.route\s*\(\s*"([^"]+)"\s*,\s*([^\n]+)/g;
       let match;
       while ((match = routePattern.exec(content)) !== null) {
-        routes.push({
-          method: match[2].toUpperCase(),
-          path: match[1],
-          file: rel,
-          tags: detectTags(content),
-          framework: "axum",
-        });
+        const path = match[1];
+        const chain = match[2];
+        const methodPat = /\b(get|post|put|patch|delete|options|head)\s*\(/gi;
+        let mm: RegExpExecArray | null;
+        while ((mm = methodPat.exec(chain)) !== null) {
+          routes.push({
+            method: mm[1].toUpperCase(),
+            path,
+            file: rel,
+            tags: detectTags(content),
+            framework: "axum",
+          });
+        }
       }
     }
   }

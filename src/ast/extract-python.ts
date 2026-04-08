@@ -387,6 +387,113 @@ filename = sys.argv[1] if len(sys.argv) > 1 else '<stdin>'
 print(json.dumps(extract_django_models(source, filename)))
 `;
 
+const PYTHON_SQLMODEL_SCRIPT = `
+import ast, json, sys
+
+def map_type(t):
+    m = {'str': 'string', 'int': 'integer', 'float': 'float', 'bool': 'boolean',
+         'bytes': 'binary', 'datetime': 'datetime', 'date': 'date', 'Decimal': 'decimal',
+         'UUID': 'uuid', 'dict': 'json', 'list': 'array'}
+    return m.get(t, t.lower() if t else 'any')
+
+def get_ann_type(ann):
+    if isinstance(ann, ast.Name):
+        return map_type(ann.id)
+    if isinstance(ann, ast.Subscript):
+        outer = ann.value.id if isinstance(ann.value, ast.Name) else ''
+        inner = ann.slice
+        if outer == 'Optional':
+            return get_ann_type(inner)
+        if outer in ('List', 'list'):
+            return 'array'
+    return 'any'
+
+def get_inner_name(ann):
+    if isinstance(ann, ast.Subscript):
+        inner = ann.slice
+        if isinstance(inner, ast.Name):
+            return inner.id
+    return ''
+
+def extract_sqlmodel(source, filename):
+    try:
+        tree = ast.parse(source, filename)
+    except SyntaxError:
+        return []
+
+    # Check if file imports from sqlmodel
+    has_sqlmodel_import = any(
+        (isinstance(n, ast.ImportFrom) and n.module and 'sqlmodel' in n.module) or
+        (isinstance(n, ast.Import) and any('sqlmodel' in a.name for a in n.names))
+        for n in ast.walk(tree)
+    )
+    if not has_sqlmodel_import:
+        return []
+
+    results = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ClassDef):
+            continue
+        # Accept: direct SQLModel inheritance OR any base with table=True (common pattern)
+        inherits = any(
+            (isinstance(b, ast.Name) and b.id == 'SQLModel') or
+            (isinstance(b, ast.Attribute) and b.attr == 'SQLModel')
+            for b in node.bases
+        )
+        has_table = any(
+            kw.arg == 'table' and isinstance(kw.value, ast.Constant) and kw.value.value is True
+            for kw in node.keywords
+        )
+        # Must have table=True; direct SQLModel inheritance is optional (base class pattern)
+        if not has_table:
+            continue
+        # Must have at least some bases (avoid bare classes with table=True from other libs)
+        if not node.bases:
+            continue
+
+        fields = []
+        relations = []
+        for stmt in node.body:
+            if not isinstance(stmt, ast.AnnAssign) or not isinstance(stmt.target, ast.Name):
+                continue
+            fname = stmt.target.id
+            if fname.startswith('_'):
+                continue
+            ftype = get_ann_type(stmt.annotation)
+
+            is_rel = False
+            if stmt.value and isinstance(stmt.value, ast.Call):
+                fn = stmt.value.func
+                fn_name = fn.id if isinstance(fn, ast.Name) else (fn.attr if isinstance(fn, ast.Attribute) else '')
+                if fn_name == 'Relationship':
+                    is_rel = True
+                    rel_target = get_inner_name(stmt.annotation)
+                    if rel_target:
+                        relations.append({'name': fname, 'target': rel_target, 'type': 'has_many'})
+
+            if not is_rel:
+                flags = []
+                if stmt.value and isinstance(stmt.value, ast.Call):
+                    fn = stmt.value.func
+                    fn_name = fn.id if isinstance(fn, ast.Name) else ''
+                    if fn_name == 'Field':
+                        for kw in stmt.value.keywords:
+                            if kw.arg == 'primary_key' and isinstance(kw.value, ast.Constant) and kw.value.value is True:
+                                flags.append('pk')
+                            elif kw.arg == 'foreign_key':
+                                flags.append('fk')
+                fields.append({'name': fname, 'type': ftype, 'flags': flags})
+
+        if fields or relations:
+            results.append({'name': node.name, 'fields': fields, 'relations': relations})
+
+    return results
+
+source = sys.stdin.read()
+filename = sys.argv[1] if len(sys.argv) > 1 else '<stdin>'
+print(json.dumps(extract_sqlmodel(source, filename)))
+`;
+
 let pythonAvailable: boolean | null = null;
 let pythonCmd: string = "python3";
 
@@ -515,6 +622,30 @@ export async function extractDjangoModelsAST(
       `${r.name}: ${r.type === "many" ? "many" : "one"}(${r.target})`
     ),
     orm: "django" as const,
+    confidence: "ast" as const,
+  }));
+}
+
+/**
+ * Extract SQLModel table models from a Python file using AST.
+ * Detects class X(SQLModel, table=True) with typed field annotations.
+ */
+export async function extractSQLModelAST(
+  filePath: string,
+  content: string
+): Promise<SchemaModel[] | null> {
+  const result = await runPythonWithStdin(PYTHON_SQLMODEL_SCRIPT, content, filePath);
+  if (!result || !Array.isArray(result) || result.length === 0) return null;
+
+  return result.map((m: any) => ({
+    name: m.name,
+    fields: (m.fields || []).map((f: any) => ({
+      name: f.name,
+      type: f.type || "unknown",
+      flags: f.flags || [],
+    })) as SchemaField[],
+    relations: (m.relations || []).map((r: any) => `${r.name}: ${r.target}`),
+    orm: "sqlalchemy" as const,
     confidence: "ast" as const,
   }));
 }

@@ -2,7 +2,7 @@ import { join, relative } from "node:path";
 import { readFileSafe } from "../scanner.js";
 import { loadTypeScript } from "../ast/loader.js";
 import { extractDrizzleSchemaAST, extractTypeORMSchemaAST } from "../ast/extract-schema.js";
-import { extractSQLAlchemyAST, extractDjangoModelsAST } from "../ast/extract-python.js";
+import { extractSQLAlchemyAST, extractDjangoModelsAST, extractSQLModelAST } from "../ast/extract-python.js";
 import { extractGORMModelsStructured } from "../ast/extract-go.js";
 import { extractEloquentModels } from "../ast/extract-php.js";
 import { extractEntityFrameworkModels } from "../ast/extract-csharp.js";
@@ -54,6 +54,12 @@ export async function detectSchemas(
         break;
       case "entity-framework":
         models.push(...(await detectEntityFrameworkSchemas(files, project)));
+        break;
+      case "mongoose":
+        models.push(...(await detectMongooseSchemas(files, project)));
+        break;
+      case "sequelize":
+        models.push(...(await detectSequelizeSchemas(files, project)));
         break;
     }
   }
@@ -331,10 +337,19 @@ async function detectSQLAlchemySchemas(
 
   for (const file of pyFiles) {
     const content = await readFileSafe(file);
+    const rel = relative(project.root, file);
+
+    // SQLModel: class X(SQLModel, table=True) with typed annotations
+    if (content.includes("SQLModel") && content.includes("table=True")) {
+      const sqlmodelModels = await extractSQLModelAST(rel, content);
+      if (sqlmodelModels && sqlmodelModels.length > 0) {
+        models.push(...sqlmodelModels);
+        continue;
+      }
+    }
+
     if (!content.includes("Column") && !content.includes("mapped_column")) continue;
     if (!content.includes("Base") && !content.includes("DeclarativeBase") && !content.includes("Model")) continue;
-
-    const rel = relative(project.root, file);
 
     // Try Python AST first
     const astModels = await extractSQLAlchemyAST(rel, content);
@@ -653,6 +668,179 @@ async function detectEntityFrameworkSchemas(
     if (!content.includes("DbContext") && !content.includes("DbSet<")) continue;
     const rel = relative(project.root, file);
     models.push(...extractEntityFrameworkModels(rel, content));
+  }
+
+  return models;
+}
+
+// --- Mongoose ---
+async function detectMongooseSchemas(
+  files: string[],
+  _project: ProjectInfo
+): Promise<SchemaModel[]> {
+  const jstsFiles = files.filter((f) => f.match(/\.(js|ts|mjs|cjs)$/));
+  const models: SchemaModel[] = [];
+  const seenNames = new Set<string>();
+
+  for (const file of jstsFiles) {
+    const content = await readFileSafe(file);
+    if (!content.includes("mongoose") && !content.includes("Schema")) continue;
+
+    // NestJS pattern: @Schema() + SchemaFactory.createForClass(XClass)
+    if (content.includes("@Schema") && content.includes("SchemaFactory")) {
+      const nestPat = /SchemaFactory\.createForClass\s*\(\s*(\w+)\s*\)/g;
+      let nm: RegExpExecArray | null;
+      while ((nm = nestPat.exec(content)) !== null) {
+        // Model name = class name without "SchemaClass" / "Schema" / "Document" suffix
+        const rawName = nm[1].replace(/(?:SchemaClass|Schema|Document)$/, "");
+        const modelName = rawName || nm[1];
+        if (seenNames.has(modelName)) continue;
+        seenNames.add(modelName);
+
+        const fields: SchemaField[] = [];
+        // Extract @Prop() decorated fields with TypeScript types
+        const propPat = /@Prop[^)]*\)\s*(?:readonly\s+)?(\w+)\??\s*:\s*([\w<>[\]|]+)/g;
+        let pm: RegExpExecArray | null;
+        while ((pm = propPat.exec(content)) !== null) {
+          const name = pm[1];
+          if (AUDIT_FIELDS.has(name)) continue;
+          fields.push({ name, type: pm[2].toLowerCase(), flags: [] });
+        }
+        models.push({ name: modelName, fields, relations: [], orm: "mongoose" });
+      }
+      continue; // already handled this file
+    }
+
+    if (!content.includes("model(") && !content.includes(".model(")) continue;
+
+    // mongoose.model('Name', schema) or model<IUser>('Name', schema)
+    const modelPat = /(?:mongoose\.)?model\s*(?:<[^>]+>)?\s*\(\s*['"`]([A-Z]\w*)['"`]/g;
+    let m: RegExpExecArray | null;
+
+    while ((m = modelPat.exec(content)) !== null) {
+      const modelName = m[1];
+      if (seenNames.has(modelName)) continue;
+      seenNames.add(modelName);
+
+      const fields: SchemaField[] = [];
+      const relations: string[] = [];
+
+      // Find schema body: const XSchema = new (mongoose.)Schema({ ... })
+      const candidates = [modelName + "Schema", modelName.toLowerCase() + "Schema", "schema", "Schema"];
+      let schemaBody: string | null = null;
+      for (const cand of candidates) {
+        const varPat = new RegExp(
+          `(?:const|let|var)\\s+${cand}\\s*=\\s*new\\s+(?:mongoose\\.)?Schema\\s*\\(\\s*\\{([\\s\\S]*?)\\}\\s*[,)]`,
+          "i"
+        );
+        const hit = varPat.exec(content);
+        if (hit) { schemaBody = hit[1]; break; }
+      }
+
+      if (schemaBody) {
+        const typeMap: Record<string, string> = {
+          string: "string", number: "number", boolean: "boolean",
+          date: "datetime", objectid: "string", buffer: "binary", mixed: "any", map: "map",
+        };
+        // fieldName: { type: String } or fieldName: String or fieldName: [String]
+        const fieldPat = /^\s*(\w+)\s*:\s*(?:\{[^}]*\btype\s*:\s*(String|Number|Boolean|Date|ObjectId|Buffer|Mixed|Map)\b|\[\s*(String|Number|Boolean|Date|ObjectId|Buffer|Mixed)\s*\]|(String|Number|Boolean|Date|ObjectId|Buffer|Mixed)\b)/gm;
+        let fm: RegExpExecArray | null;
+        while ((fm = fieldPat.exec(schemaBody)) !== null) {
+          const name = fm[1];
+          if (["type", "default", "ref", "required", "unique", "index", "enum"].includes(name)) continue;
+          if (AUDIT_FIELDS.has(name)) continue;
+          const rawType = (fm[2] || fm[3] || fm[4] || "mixed").toLowerCase();
+          fields.push({ name, type: typeMap[rawType] || rawType, flags: [] });
+        }
+
+        // ref: 'Model' → relation
+        const refPat = /(\w+)\s*:\s*\{[^}]*ref\s*:\s*['"`](\w+)['"`]/g;
+        while ((fm = refPat.exec(schemaBody)) !== null) {
+          relations.push(`${fm[1]}: ${fm[2]}`);
+        }
+      }
+
+      // Fallback: TypeScript interface IModelName extends Document
+      if (fields.length === 0) {
+        const ifacePat = new RegExp(
+          `interface\\s+I${modelName}\\s*(?:extends[^{]+)?\\{([^}]+)\\}`, "s"
+        );
+        const ifaceMatch = content.match(ifacePat);
+        if (ifaceMatch) {
+          const fieldPat = /^\s*(\w+)\??\s*:\s*([\w<>[\]|' "]+)/gm;
+          let fm: RegExpExecArray | null;
+          while ((fm = fieldPat.exec(ifaceMatch[1])) !== null) {
+            const name = fm[1];
+            if (name.startsWith("_") || AUDIT_FIELDS.has(name)) continue;
+            fields.push({ name, type: fm[2].trim(), flags: [] });
+          }
+        }
+      }
+
+      models.push({ name: modelName, fields, relations, orm: "mongoose" });
+    }
+  }
+
+  return models;
+}
+
+// --- Sequelize ---
+function parseSequelizeFields(body: string): SchemaField[] {
+  const seqTypeMap: Record<string, string> = {
+    STRING: "string", TEXT: "string", CHAR: "string", CITEXT: "string",
+    INTEGER: "integer", BIGINT: "integer", SMALLINT: "integer",
+    FLOAT: "float", DOUBLE: "float", REAL: "float",
+    DECIMAL: "decimal", NUMERIC: "decimal",
+    BOOLEAN: "boolean",
+    DATE: "datetime", DATEONLY: "date", TIME: "time",
+    JSON: "json", JSONB: "json",
+    UUID: "string", UUIDV1: "string", UUIDV4: "string",
+    BLOB: "binary", ARRAY: "array", ENUM: "enum", VIRTUAL: "virtual",
+  };
+  const skip = new Set(["type", "defaultValue", "allowNull", "unique", "primaryKey", "references", "onDelete", "onUpdate"]);
+  const fields: SchemaField[] = [];
+  // fieldName: DataTypes.STRING or fieldName: { type: DataTypes.INTEGER }
+  const fieldPat = /^\s*(\w+)\s*:\s*(?:DataTypes?\.(\w+)|\{\s*(?:[^}]*\btype\s*:\s*DataTypes?\.(\w+)))/gm;
+  let fm: RegExpExecArray | null;
+  while ((fm = fieldPat.exec(body)) !== null) {
+    const name = fm[1];
+    if (skip.has(name) || AUDIT_FIELDS.has(name)) continue;
+    const raw = (fm[2] || fm[3] || "unknown").toUpperCase();
+    fields.push({ name, type: seqTypeMap[raw] || raw.toLowerCase(), flags: [] });
+  }
+  return fields;
+}
+
+async function detectSequelizeSchemas(
+  files: string[],
+  _project: ProjectInfo
+): Promise<SchemaModel[]> {
+  const jstsFiles = files.filter((f) => f.match(/\.(js|ts|mjs|cjs)$/));
+  const models: SchemaModel[] = [];
+  const seenNames = new Set<string>();
+
+  for (const file of jstsFiles) {
+    const content = await readFileSafe(file);
+    if (!content.includes("sequelize") && !content.includes("Sequelize") && !content.includes("DataTypes")) continue;
+
+    // Pattern 1: class X extends Model with X.init({ fields }, { sequelize })
+    const classInitPat = /class\s+(\w+)\s+extends\s+Model[\s\S]*?\1\.init\s*\(\s*\{([\s\S]*?)\}\s*,\s*\{/g;
+    let m: RegExpExecArray | null;
+    while ((m = classInitPat.exec(content)) !== null) {
+      const name = m[1];
+      if (seenNames.has(name)) continue;
+      seenNames.add(name);
+      models.push({ name, fields: parseSequelizeFields(m[2]), relations: [], orm: "sequelize" });
+    }
+
+    // Pattern 2: sequelize.define('ModelName', { fields })
+    const definePat = /sequelize\.define\s*\(\s*['"`](\w+)['"`]\s*,\s*\{([\s\S]*?)\}\s*[,)]/g;
+    while ((m = definePat.exec(content)) !== null) {
+      const name = m[1];
+      if (seenNames.has(name)) continue;
+      seenNames.add(name);
+      models.push({ name, fields: parseSequelizeFields(m[2]), relations: [], orm: "sequelize" });
+    }
   }
 
   return models;
