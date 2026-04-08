@@ -40,6 +40,12 @@ export async function detectSchemas(
       case "gorm":
         models.push(...(await detectGORMSchemas(files, project)));
         break;
+      case "activerecord":
+        models.push(...(await detectActiveRecordSchemas(project)));
+        break;
+      case "ecto":
+        models.push(...(await detectEctoSchemas(files, project)));
+        break;
       case "django":
         models.push(...(await detectDjangoSchemas(files, project)));
         break;
@@ -401,6 +407,133 @@ async function detectGORMSchemas(
     const rel = relative(_project.root, file);
     const structModels = extractGORMModelsStructured(rel, content);
     models.push(...structModels);
+  }
+
+  return models;
+}
+
+// --- Ecto (Phoenix/Elixir) ---
+async function detectEctoSchemas(
+  files: string[],
+  _project: ProjectInfo
+): Promise<SchemaModel[]> {
+  const exFiles = files.filter((f) => f.endsWith(".ex") || f.endsWith(".exs"));
+  const models: SchemaModel[] = [];
+
+  for (const file of exFiles) {
+    const content = await readFileSafe(file);
+    if (!content.includes("use Ecto.Schema") && !content.includes("Ecto.Schema")) continue;
+
+    // schema "table_name" do ... end
+    const schemaPattern = /schema\s+["'](\w+)["']\s+do([\s\S]*?)(?:\n\s*end\b)/g;
+    let m: RegExpExecArray | null;
+    while ((m = schemaPattern.exec(content)) !== null) {
+      const tableName = m[1];
+      const body = m[2];
+      const fields: SchemaField[] = [];
+      const relations: string[] = [];
+
+      // field :name, :type (or :type with options)
+      const fieldPat = /field\s+:(\w+),\s*(?::(\w+)|[\w.]+\.(\w+))/g;
+      let fm: RegExpExecArray | null;
+      while ((fm = fieldPat.exec(body)) !== null) {
+        const fname = fm[1];
+        const ftype = fm[2] || fm[3] || "unknown";
+        if (AUDIT_FIELDS.has(fname) || fname === "inserted_at" || fname === "updated_at") continue;
+
+        const ectoTypeMap: Record<string, string> = {
+          string: "string", binary: "bytes", boolean: "boolean",
+          integer: "integer", float: "float", decimal: "decimal",
+          date: "date", time: "time", naive_datetime: "timestamp",
+          utc_datetime: "timestamp", datetime: "timestamp",
+          map: "map", array: "array", uuid: "uuid",
+          binary_id: "uuid", id: "integer",
+          Enum: "enum", INET: "inet",
+        };
+
+        const flags: string[] = [];
+        if (fname.endsWith("_id")) flags.push("fk");
+        fields.push({ name: fname, type: ectoTypeMap[ftype] ?? ftype, flags });
+      }
+
+      // belongs_to :name, Module
+      const belongsPat = /belongs_to\s+:(\w+),\s*(\w[\w.]*)/g;
+      while ((fm = belongsPat.exec(body)) !== null) {
+        relations.push(`${fm[1]}: belongs_to(${fm[2]})`);
+        fields.push({ name: fm[1] + "_id", type: "integer", flags: ["fk"] });
+      }
+
+      // has_many / has_one / many_to_many
+      const hasPat = /(has_many|has_one|many_to_many)\s+:(\w+),\s*(\w[\w.]*)/g;
+      while ((fm = hasPat.exec(body)) !== null) {
+        relations.push(`${fm[2]}: ${fm[1]}(${fm[3]})`);
+      }
+
+      if (fields.length > 0 || relations.length > 0) {
+        // Use module name as model name if available
+        const modMatch = content.match(/defmodule\s+([\w.]+)/);
+        const modelName = modMatch ? modMatch[1].split(".").pop()! : tableName;
+        models.push({ name: modelName, fields, relations, orm: "ecto" });
+      }
+    }
+  }
+
+  return models;
+}
+
+// --- ActiveRecord (Rails) — parse db/schema.rb ---
+async function detectActiveRecordSchemas(
+  project: ProjectInfo
+): Promise<SchemaModel[]> {
+  const schemaPath = join(project.root, "db/schema.rb");
+  const content = await readFileSafe(schemaPath);
+  if (!content) return [];
+
+  const models: SchemaModel[] = [];
+  // create_table "tablename", options... do |t| ... end
+  const tablePattern = /create_table\s+["'](\w+)["'][^\n]*\bdo\s*\|t\|([\s\S]*?)^\s*end/gm;
+  let m: RegExpExecArray | null;
+
+  while ((m = tablePattern.exec(content)) !== null) {
+    const name = m[1];
+    const body = m[2];
+    const fields: SchemaField[] = [];
+    const relations: string[] = [];
+
+    // t.type "column_name" ...
+    const fieldPat = /t\.(\w+)\s+["'](\w+)["']([^\n]*)/g;
+    let fm: RegExpExecArray | null;
+    while ((fm = fieldPat.exec(body)) !== null) {
+      const rbType = fm[1];
+      const fieldName = fm[2];
+      const opts = fm[3];
+
+      // Skip index and metadata entries
+      if (["index", "timestamps", "primary_key"].includes(rbType)) continue;
+      if (AUDIT_FIELDS.has(fieldName)) continue;
+
+      const typeMap: Record<string, string> = {
+        string: "string", text: "text", citext: "string",
+        integer: "integer", bigint: "integer", smallint: "integer",
+        float: "float", decimal: "decimal", numeric: "decimal",
+        boolean: "boolean",
+        date: "date", datetime: "timestamp", timestamp: "timestamp", time: "time",
+        json: "json", jsonb: "jsonb",
+        uuid: "uuid", binary: "bytes",
+        inet: "string", ltree: "string",
+      };
+
+      const flags: string[] = [];
+      if (opts.includes("null: false")) flags.push("required");
+      if (opts.includes("default:")) flags.push("default");
+      if (fieldName.endsWith("_id")) { flags.push("fk"); relations.push(`${fieldName} -> ?`); }
+
+      fields.push({ name: fieldName, type: typeMap[rbType] ?? rbType, flags });
+    }
+
+    if (fields.length > 0) {
+      models.push({ name, fields, relations, orm: "activerecord" });
+    }
   }
 
   return models;

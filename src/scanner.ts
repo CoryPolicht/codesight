@@ -339,25 +339,22 @@ async function detectFrameworks(
     } catch {}
   }
 
-  // ASP.NET Core
-  const hasCsprojOrSln =
-    (await fileExists(join(root, "*.csproj")).then(() => false).catch(() => false)) ||
-    (await (async () => {
-      try {
-        const entries = await readdir(root);
-        return entries.some((e) => e.endsWith(".csproj") || e.endsWith(".sln"));
-      } catch { return false; }
-    })());
-  if (hasCsprojOrSln) {
+  // ASP.NET Core — search all .csproj files recursively (may be nested in src/)
+  const allCsproj = await findAllCsproj(root);
+  for (const csprojPath of allCsproj) {
+    try {
+      const content = await readFile(csprojPath, "utf-8");
+      if (content.includes("Microsoft.AspNetCore")) {
+        frameworks.push("aspnet");
+        break;
+      }
+    } catch {}
+  }
+  // Fallback: .sln at root without any AspNetCore csproj → still a .NET project
+  if (!frameworks.includes("aspnet") && allCsproj.length > 0) {
     try {
       const entries = await readdir(root);
-      const csproj = entries.find((e) => e.endsWith(".csproj"));
-      if (csproj) {
-        const content = await readFile(join(root, csproj), "utf-8");
-        if (content.includes("Microsoft.AspNetCore") || content.includes("web")) {
-          frameworks.push("aspnet");
-        }
-      }
+      if (entries.some((e) => e.endsWith(".sln"))) frameworks.push("aspnet");
     } catch {}
   }
 
@@ -417,7 +414,7 @@ async function detectORMs(
   if (deps["sequelize"]) orms.push("sequelize");
 
   const pyDeps = await getPythonDeps(root);
-  if (pyDeps.includes("sqlalchemy")) orms.push("sqlalchemy");
+  if (pyDeps.includes("sqlalchemy") || pyDeps.includes("sqlmodel")) orms.push("sqlalchemy");
   // Django has a built-in ORM — detect it from framework list
   if (pyDeps.includes("django")) orms.push("django");
 
@@ -451,17 +448,17 @@ async function detectORMs(
     } catch {}
   }
 
-  // Entity Framework (ASP.NET)
-  try {
-    const entries = await readdir(root);
-    const csproj = entries.find((e) => e.endsWith(".csproj"));
-    if (csproj) {
-      const content = await readFile(join(root, csproj), "utf-8");
+  // Entity Framework (ASP.NET) — check all csproj files
+  const allCsprojForOrm = await findAllCsproj(root);
+  for (const cp of allCsprojForOrm) {
+    try {
+      const content = await readFile(cp, "utf-8");
       if (content.includes("EntityFramework") || content.includes("Microsoft.EntityFrameworkCore")) {
         orms.push("entity-framework");
+        break;
       }
-    }
-  } catch {}
+    } catch {}
+  }
 
   return orms;
 }
@@ -745,6 +742,22 @@ async function resolveRepoName(root: string): Promise<string> {
 
   // Fallback: use directory name
   return basename(root);
+}
+
+/** Recursively collect all .csproj files up to maxDepth levels deep. */
+async function findAllCsproj(dir: string, depth = 0, results: string[] = []): Promise<string[]> {
+  if (depth > 4) return results;
+  try {
+    const entries = await readdir(dir, { withFileTypes: true });
+    const skipDirs = new Set(["node_modules", ".git", "bin", "obj", "out", "dist", "build", ".vs"]);
+    for (const e of entries) {
+      if (e.name.endsWith(".csproj")) results.push(join(dir, e.name));
+      else if (e.isDirectory() && !skipDirs.has(e.name)) {
+        await findAllCsproj(join(dir, e.name), depth + 1, results);
+      }
+    }
+  } catch {}
+  return results;
 }
 
 async function fileExists(path: string): Promise<boolean> {

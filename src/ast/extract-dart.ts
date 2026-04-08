@@ -31,11 +31,19 @@ export function extractFlutterRoutes(
     return routes;
   }
 
-  // GoRoute(path: '/path', ...) — handles single and double quotes
-  const goRoutePattern = /GoRoute\s*\([^)]*path\s*:\s*['"]([^'"]+)['"]/g;
+  // Step 1: collect static path constants (ScreenPaths, AppPaths, etc.)
+  // static String home = '/home'; or static const home = '/home';
+  const pathConstants = new Map<string, string>();
+  const constPat = /static\s+(?:const\s+)?(?:String\s+)?(\w+)\s*=\s*['"]([/][^'"]*)['"]/g;
   let m: RegExpExecArray | null;
-  while ((m = goRoutePattern.exec(content)) !== null) {
-    const path = m[1];
+  while ((m = constPat.exec(content)) !== null) {
+    pathConstants.set(m[1], m[2]);
+  }
+
+  const seen = new Set<string>();
+  function addRoute(path: string) {
+    if (!path || seen.has(path)) return;
+    seen.add(path);
     routes.push({
       method: "GET",
       path,
@@ -47,22 +55,34 @@ export function extractFlutterRoutes(
     });
   }
 
-  // ShellRoute / StatefulShellRoute — treated as GET navigation routes
-  const shellRoutePattern = /StatefulShellRoute[^(]*\([^)]*path\s*:\s*['"]([^'"]+)['"]/g;
-  while ((m = shellRoutePattern.exec(content)) !== null) {
-    const path = m[1];
-    if (!routes.some((r) => r.path === path)) {
-      routes.push({
-        method: "GET",
-        path,
-        file: filePath,
-        tags,
-        framework: "flutter",
-        params: extractPathParams(path),
-        confidence: "regex",
-      });
+  // Step 2: GoRoute(path: '...') — standard named param
+  const goRoutePattern = /GoRoute\s*\([^)]*path\s*:\s*['"]([^'"]+)['"]/g;
+  while ((m = goRoutePattern.exec(content)) !== null) addRoute(m[1]);
+
+  // Step 3: any *Route subclass or GoRoute called with path as first positional string arg
+  // Matches: AppRoute('/path', ...) or GoRoute('/path', ...)
+  // Also resolves ScreenPaths.X constants
+  const positionalPat = /\b(\w*Route)\s*\(\s*(?:(['"])([^'"]+)\2|([\w.]+))/g;
+  while ((m = positionalPat.exec(content)) !== null) {
+    const literal = m[3];       // string literal path
+    const identifier = m[4];   // e.g. ScreenPaths.home
+
+    if (literal) {
+      // Inside *Route() context every short non-URL string is a path segment (even bare words)
+      if (!literal.includes("://") && !literal.includes(" ") && literal.length <= 80) {
+        addRoute(literal.startsWith("/") ? literal : "/" + literal);
+      }
+    } else if (identifier) {
+      // Resolve ScreenPaths.home → check pathConstants map
+      const key = identifier.split(".").pop()!;
+      const resolved = pathConstants.get(key);
+      if (resolved) addRoute(resolved);
     }
   }
+
+  // Step 4: StatefulShellRoute(path: '...')
+  const shellRoutePattern = /StatefulShellRoute[^(]*\([^)]*path\s*:\s*['"]([^'"]+)['"]/g;
+  while ((m = shellRoutePattern.exec(content)) !== null) addRoute(m[1]);
 
   return routes;
 }

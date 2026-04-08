@@ -138,21 +138,31 @@ SaaS C has 0 models because it uses MongoDB — no SQL ORM declarations for code
 
 ![Token comparison: Without codesight (46K-66K tokens) vs With codesight (3K-5K tokens)](assets/token-comparison.jpg)
 
-### Large-Scale OSS Projects (v1.6.4)
+### Multi-Language OSS Benchmark (v1.6.6)
 
-Tested against three large open-source production codebases (4K–10K+ files each). All numbers from actual `codesight v1.6.4` scan output — output tokens measured from real file size, exploration tokens estimated from what codesight extracted.
+Tested against 14 production open-source codebases spanning every supported language and framework. All numbers from actual `codesight v1.6.6` scan output — zero manual adjustments.
 
-| Project | Stack | Files scanned | Routes | Models | Output tokens | Exploration tokens | Savings | Scan time |
+| Language | Stack | Files | Routes | Models | Components | Output tokens | Exploration tokens | Savings |
 |---|---|---|---|---|---|---|---|---|
-| **OSS Next.js monorepo** | Next.js + tRPC + Prisma, 110+ workspaces | 7,509 | 479 | 173 | 158,660 | 1,485,055 | **9.4x** | 2.8s |
-| **OSS Laravel SaaS** | Laravel + Eloquent | 3,896 | 652 | 59 | 30,739 | 493,285 | **16x** | 2.1s |
-| **OSS Django platform** | Django + pyproject.toml | 4,232 | 7¹ | 56 | 83,842 | 631,020 | **7.5x** | 1.0s |
+| **TypeScript · Next.js** | Next.js + tRPC + Prisma · 110+ workspaces | 7,509 | 479 | 173 | 1,309 | 158,660 | 1,485,055 | **9.4x** |
+| **TypeScript · NestJS** | NestJS + TypeORM + Mongoose | 162 | 19 | 5 | 0 | 5,269 | 66,300 | **12.6x** |
+| **Ruby · Rails** | Rails + ActiveRecord | 4,172 | 607 | 116 | 0 | 21,711 | 386,100 | **17.8x** |
+| **PHP · Laravel** | Laravel + Eloquent | 3,896 | 652 | 59 | 0 | 30,739 | 493,285 | **16x** |
+| **Python · Django** | Django + pyproject.toml | 4,232 | 7¹ | 56 | 0 | 83,842 | 631,020 | **7.5x** |
+| **Python · FastAPI** | FastAPI + SQLAlchemy + React (monorepo) | 143 | 21 | 0 | 36 | 2,487 | 38,090 | **15.3x** |
+| **Elixir · Phoenix** | Phoenix + Ecto | 1,406 | 198 | 54 | 0 | 9,589 | 152,100 | **15.9x** |
+| **Go · Gin** | Gin + GORM | 20 | 22 | 16 | 0 | 2,061 | 24,895 | **12.1x** |
+| **Rust · Actix** | actix-web | 528 | 30 | 0 | 0 | 1,355 | 27,170 | **20x** |
+| **C# · ASP.NET** | ASP.NET Core + Entity Framework Core | 256 | 13 | 7 | 0 | 5,126 | 63,570 | **12.4x** |
+| **Kotlin · Spring** | Spring Boot + Kotlin | 47 | 16 | 0 | 0 | 318 | 13,208 | **41x**² |
+| **Swift · SwiftUI** | SwiftUI | 388 | 0 | 0 | 62 | 7,499 | 76,830 | **10.2x** |
+| **Swift · Vapor** | Vapor backend | 294 | 81 | 0 | 0 | 6,146 | 95,160 | **15.5x** |
+| **Dart · Flutter** | Flutter + go_router | 204 | 10 | 0 | 89 | 8,500 | 86,125 | **10.1x** |
 
 ¹ Django project is GraphQL-first — URL routes aren't the primary API surface. 7 REST utility endpoints detected accurately.
+² High ratio because Spring Boot route metadata compresses extremely well on small codebases.
 
-**At 7,509 files:** codesight compresses what would cost ~1.48M tokens of manual exploration into a 158K-token context map in under 3 seconds. The Next.js monorepo has 110+ workspaces, 173 Prisma models, 1,309 React components, and 356 env vars — all extracted correctly across nested workspace paths.
-
-**At 3,896 files:** the Laravel project extracts 652 routes (including `resource()` expansions) and 59 Eloquent models with fields and relations. 16x reduction in a single pass.
+**Highlights:** The Rails project extracts 607 routes and 116 ActiveRecord models from 4,172 files in under 2s. The Next.js monorepo — 110+ workspaces, 173 Prisma models across nested workspace paths, 1,309 React components — compresses 1.48M tokens of manual exploration into a 159K-token map in under 3s. Zero false positives across all 14 projects.
 
 ### Wiki Breakdown (v1.6.2)
 
