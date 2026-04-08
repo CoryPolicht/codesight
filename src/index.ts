@@ -25,7 +25,7 @@ import type { ScanResult } from "./types.js";
 import type { CodesightConfig } from "./types.js";
 import { loadConfig, mergeCliConfig } from "./config.js";
 
-const VERSION = "1.9.4";
+const VERSION = "1.9.5";
 const BRAND = "codesight";
 
 function printHelp() {
@@ -375,7 +375,7 @@ async function runKnowledgeScan(root: string, outputDirName: string, maxDepth: n
 
   process.stdout.write("  Collecting notes...");
   const files = await collectFiles(root, maxDepth, []);
-  const mdFiles = files.filter((f) => f.endsWith(".md"));
+  const mdFiles = files.filter((f) => f.endsWith(".md") || f.endsWith(".mdx"));
   console.log(` ${mdFiles.length} markdown files`);
 
   process.stdout.write("  Analyzing...");

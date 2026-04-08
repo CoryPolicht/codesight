@@ -1,4 +1,5 @@
 import { resolve, join } from "node:path";
+import { readFile } from "node:fs/promises";
 import { collectFiles, detectProject, readCodesightIgnore } from "./scanner.js";
 import { loadConfig } from "./config.js";
 import { detectRoutes } from "./detectors/routes.js";
@@ -418,6 +419,18 @@ async function toolGetCoverage(args: any): Promise<string> {
   return lines.join("\n");
 }
 
+async function toolGetKnowledge(args: any): Promise<string> {
+  const dir = args.directory ? resolve(args.directory) : process.cwd();
+  const config = await loadConfig(dir);
+  const outputDirName = config.outputDir ?? ".codesight";
+  const knowledgePath = join(dir, outputDirName, "KNOWLEDGE.md");
+  try {
+    return await readFile(knowledgePath, "utf8");
+  } catch {
+    return `Knowledge map not found. Run \`npx codesight --mode knowledge\` in ${dir} to generate it.\n\nThis scans all .md/.mdx files and extracts decisions, open questions, people, and recurring themes into a compact AI context file.`;
+  }
+}
+
 // =================== TOOL DEFINITIONS ===================
 
 const TOOLS = [
@@ -594,6 +607,18 @@ const TOOLS = [
     },
     handler: toolGetCoverage,
   },
+  {
+    name: "codesight_get_knowledge",
+    description:
+      "Get the knowledge map for a second-brain or docs folder: decisions made, open questions, recurring themes, people mentioned, and an index of all notes by type (ADR, meeting, retro, spec, etc.). Run `npx codesight --mode knowledge` first to generate it.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        directory: { type: "string", description: "Directory (defaults to cwd)" },
+      },
+    },
+    handler: toolGetKnowledge,
+  },
 ];
 
 // =================== MCP PROTOCOL ===================
@@ -606,7 +631,7 @@ async function handleRequest(req: JsonRpcRequest) {
       result: {
         protocolVersion: "2024-11-05",
         capabilities: { tools: {} },
-        serverInfo: { name: "codesight", version: "1.9.4" },
+        serverInfo: { name: "codesight", version: "1.9.5" },
       },
     });
     return;

@@ -59,17 +59,34 @@ function extractFrontmatter(content: string): Record<string, string | string[]> 
   if (!match) return {};
 
   const fm: Record<string, string | string[]> = {};
-  for (const line of match[1].split("\n")) {
+  const lines = match[1].split("\n");
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
     const colonIdx = line.indexOf(":");
-    if (colonIdx < 1) continue;
+    if (colonIdx < 1) { i++; continue; }
     const key = line.slice(0, colonIdx).trim();
     const raw = line.slice(colonIdx + 1).trim();
-    // Detect YAML lists: "- item" on same line or "[a, b]" inline
+
+    // YAML block sequence: key with empty value, followed by "  - item" lines
+    if (raw === "" && i + 1 < lines.length && /^\s+-\s/.test(lines[i + 1])) {
+      const items: string[] = [];
+      i++;
+      while (i < lines.length && /^\s+-\s/.test(lines[i])) {
+        items.push(lines[i].replace(/^\s+-\s*/, "").trim().replace(/^["']|["']$/g, ""));
+        i++;
+      }
+      fm[key] = items;
+      continue;
+    }
+
+    // Inline list: "[a, b]"
     if (raw.startsWith("[") && raw.endsWith("]")) {
       fm[key] = raw.slice(1, -1).split(",").map((s) => s.trim().replace(/^["']|["']$/g, ""));
     } else {
       fm[key] = raw.replace(/^["']|["']$/g, "");
     }
+    i++;
   }
   return fm;
 }
@@ -131,23 +148,24 @@ function extractOpenQuestions(content: string): string[] {
   const questions: string[] = [];
 
   for (const line of content.split("\n")) {
-    const t = line.trim();
+    let t = line.trim();
     if (
       t.endsWith("?") &&
       !t.startsWith("#") &&
       !t.startsWith(">") &&
       t.length >= 15 &&
-      t.length <= 160 &&
+      t.length <= 200 &&
       !/[^\x00-\x7F]/.test(t) // skip non-ASCII (non-English questions)
     ) {
-      questions.push(t.replace(/^[-*]\s*/, ""));
+      t = cleanWikilinks(t.replace(/^[-*]\s*/, ""));
+      if (t.length >= 15 && t.length <= 160) questions.push(t);
     }
   }
 
   // TODO / QUESTION markers
   const todoRe = /(?:TODO|QUESTION|OPEN|FIXME):\s*([^\n]{10,120})/gi;
   let m: RegExpExecArray | null;
-  while ((m = todoRe.exec(content)) !== null) questions.push(m[1].trim());
+  while ((m = todoRe.exec(content)) !== null) questions.push(cleanWikilinks(m[1].trim()));
 
   return [...new Set(questions)].slice(0, 5);
 }
@@ -178,6 +196,12 @@ function extractPeople(content: string): string[] {
     if (HANDLE_BLACKLIST.has(handle.toLowerCase())) continue;
     if (handle.includes("-")) continue; // npm scoped packages
     people.add(handle);
+  }
+
+  // [[First Last]] Obsidian wikilinks — two-word proper nouns only
+  for (const m of content.matchAll(/\[\[([A-Z][a-z]+ [A-Z][a-z]+)(?:\|[^\]]+)?\]\]/g)) {
+    const name = m[1];
+    if (!PEOPLE_BLACKLIST.has(name)) people.add(name);
   }
 
   // "First Last:" at start of line — only scan meeting-like content to avoid ADR field labels
@@ -216,6 +240,15 @@ function extractTags(fm: Record<string, string | string[]>, content: string): st
   return [...tags].slice(0, 12);
 }
 
+// ─── Wikilink Cleanup ─────────────────────────────────────────────────────────
+
+// Strip [[link|alias]] → alias, [[link]] → link, leaving plain text
+function cleanWikilinks(text: string): string {
+  return text
+    .replace(/\[\[([^\]|]+)\|([^\]]+)\]\]/g, "$2") // [[link|alias]] → alias
+    .replace(/\[\[([^\]]+)\]\]/g, "$1");            // [[link]] → link
+}
+
 // ─── Summary Extraction ───────────────────────────────────────────────────────
 
 function extractSummary(content: string, maxLen = 160): string {
@@ -234,8 +267,9 @@ function extractSummary(content: string, maxLen = 160): string {
     if (/^```/.test(t)) continue;          // code fences
     if (/^\|/.test(t)) continue;           // tables
     if (/^<!--/.test(t)) continue;         // HTML comments
-    // Strip leading list/blockquote markers
+    // Strip leading list/blockquote markers and clean wikilinks
     t = t.replace(/^[-*>]\s+/, "").replace(/^\d+\.\s+/, "");
+    t = cleanWikilinks(t);
     if (t.length <= 15) continue;
     return t.length > maxLen ? t.slice(0, maxLen) + "…" : t;
   }
@@ -255,7 +289,7 @@ export async function detectKnowledge(
   root: string
 ): Promise<KnowledgeMap> {
   const mdFiles = files.filter((f) => {
-    if (!f.endsWith(".md")) return false;
+    if (!f.endsWith(".md") && !f.endsWith(".mdx")) return false;
     const rel = relative(root, f).replace(/\\/g, "/");
     return !SKIP_PATTERNS.some((p) => rel.includes(p));
   });

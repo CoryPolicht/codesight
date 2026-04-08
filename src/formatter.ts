@@ -587,6 +587,26 @@ export function formatKnowledge(map: KnowledgeMap, projectName: string, version:
   lines.push(`> ${notes.length} notes · ${decisions.length} decisions · ${openQuestions.length} open questions${dateStr}`);
   lines.push("");
 
+  // AI Context Primer — synthesized summary for pasting into any AI conversation
+  {
+    const parts: string[] = [];
+    const topThemes = recurringThemes.slice(0, 4).join(", ");
+    const topDecision = decisions[0] ? decisions[0].replace(/^\[\d{4}-\d{2}-\d{2}\]\s*/, "") : null;
+    if (dateRange) {
+      parts.push(`This knowledge base spans ${dateRange.from} to ${dateRange.to} (${notes.length} notes).`);
+    } else {
+      parts.push(`This knowledge base has ${notes.length} notes.`);
+    }
+    if (topThemes) parts.push(`Key topics: ${topThemes}.`);
+    if (topDecision) {
+      const d = topDecision.length > 120 ? topDecision.slice(0, 120) + "…" : topDecision;
+      parts.push(`Most recent decision: ${d.replace(/\.+$/, "")}.`);
+    }
+    if (openQuestions.length > 0) parts.push(`${openQuestions.length} open question${openQuestions.length > 1 ? "s" : ""} remain.`);
+    lines.push(`> **AI Primer:** ${parts.join(" ")}`);
+    lines.push("");
+  }
+
   // Key decisions (most recent first, already sorted)
   if (decisions.length > 0) {
     lines.push(`## Key Decisions (${decisions.length})`);
@@ -619,10 +639,10 @@ export function formatKnowledge(map: KnowledgeMap, projectName: string, version:
     lines.push("");
   }
 
-  // People
+  // People — handles get @prefix, full names shown as-is
   if (people.length > 0) {
     lines.push(`## People`);
-    lines.push(people.map((p) => `@${p}`).join(" · "));
+    lines.push(people.map((p) => p.includes(" ") ? p : `@${p}`).join(" · "));
     lines.push("");
   }
 
