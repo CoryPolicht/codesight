@@ -667,11 +667,31 @@ async function getPythonDeps(root: string): Promise<string[]> {
     } catch {}
     try {
       const toml = await readFile(join(dir, "pyproject.toml"), "utf-8");
-      const depSection = toml.match(/\[project\][\s\S]*?dependencies\s*=\s*\[([\s\S]*?)\]/);
-      if (depSection) {
-        for (const match of depSection[1].matchAll(/"([^"]+)"/g)) {
-          const name = match[1].split(/[>=<\[]/)[0].trim().toLowerCase();
-          if (!deps.includes(name)) deps.push(name);
+      // Find [project] section then locate dependencies = [...]
+      // Use bracket counting to handle packages with extras like django[bcrypt]
+      const projectIdx = toml.indexOf("[project]");
+      if (projectIdx >= 0) {
+        const afterProject = toml.slice(projectIdx);
+        const depMatch = afterProject.match(/\bdependencies\s*=\s*\[/);
+        if (depMatch) {
+          const arrStart = projectIdx + (depMatch.index ?? 0) + depMatch[0].length - 1;
+          let depth = 1;
+          let pos = arrStart + 1;
+          let inStr = false;
+          while (pos < toml.length && depth > 0) {
+            const ch = toml[pos];
+            if (ch === '"' && toml[pos - 1] !== "\\") inStr = !inStr;
+            if (!inStr) {
+              if (ch === "[") depth++;
+              else if (ch === "]") depth--;
+            }
+            pos++;
+          }
+          const depsContent = toml.slice(arrStart + 1, pos - 1);
+          for (const m of depsContent.matchAll(/"([^"]+)"/g)) {
+            const name = m[1].split(/[>=<\[!~;]/)[0].trim().toLowerCase();
+            if (name && !deps.includes(name)) deps.push(name);
+          }
         }
       }
     } catch {}

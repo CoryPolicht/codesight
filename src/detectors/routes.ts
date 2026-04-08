@@ -162,8 +162,11 @@ async function detectNextAppRoutes(
   for (const file of routeFiles) {
     const content = await readFileSafe(file);
     const rel = relative(project.root, file).replace(/\\/g, "/");
-    const pathMatch = rel.match(/(?:src\/)?app(.*)\/route\./);
-    const apiPath = pathMatch ? pathMatch[1] || "/" : "/";
+    // Match /app/ or /src/app/ as a directory boundary (not inside "apps/...")
+    const pathMatch = rel.match(/(?:^|\/)(?:src\/)?app(?=\/)(\/.*?)\/route\./);
+    let apiPath = pathMatch ? pathMatch[1] || "/" : "/";
+    // Remove Next.js route groups like (marketing), (auth), etc.
+    apiPath = apiPath.replace(/\/\([^)]+\)/g, "") || "/";
 
     for (const method of HTTP_METHODS) {
       const pattern = new RegExp(

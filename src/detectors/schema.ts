@@ -29,7 +29,7 @@ export async function detectSchemas(
         models.push(...(await detectDrizzleSchemas(files, project)));
         break;
       case "prisma":
-        models.push(...(await detectPrismaSchemas(project)));
+        models.push(...(await detectPrismaSchemas(files, project)));
         break;
       case "typeorm":
         models.push(...(await detectTypeORMSchemas(files, project)));
@@ -87,7 +87,6 @@ async function detectDrizzleSchemas(
 
     let match;
     while ((match = tablePattern.exec(content)) !== null) {
-      const varName = match[1];
       const tableName = match[2];
       const body = match[3];
 
@@ -156,83 +155,94 @@ async function detectDrizzleSchemas(
 
 // --- Prisma ---
 async function detectPrismaSchemas(
+  _files: string[],
   project: ProjectInfo
 ): Promise<SchemaModel[]> {
-  const possiblePaths = [
+  // Collect all candidate paths: standard root locations + workspace sub-paths (monorepo)
+  const candidateSet = new Set<string>([
     join(project.root, "prisma/schema.prisma"),
     join(project.root, "schema.prisma"),
     join(project.root, "prisma/schema"),
-  ];
-
-  let content = "";
-  for (const p of possiblePaths) {
-    content = await readFileSafe(p);
-    if (content) break;
+  ]);
+  // Check each workspace directory for its own schema.prisma (handles monorepos)
+  for (const ws of project.workspaces) {
+    const wsAbs = join(project.root, ws.path);
+    candidateSet.add(join(wsAbs, "schema.prisma"));
+    candidateSet.add(join(wsAbs, "prisma/schema.prisma"));
+    candidateSet.add(join(wsAbs, "prisma/schema"));
   }
-  if (!content) return [];
 
-  const models: SchemaModel[] = [];
-  const modelPattern = /model\s+(\w+)\s*\{([\s\S]*?)\n\}/g;
+  const allModels: SchemaModel[] = [];
+  const seenNames = new Set<string>();
 
-  let match;
-  while ((match = modelPattern.exec(content)) !== null) {
-    const name = match[1];
-    const body = match[2];
-    const fields: SchemaField[] = [];
-    const relations: string[] = [];
+  for (const p of candidateSet) {
+    const content = await readFileSafe(p);
+    if (!content) continue;
 
-    for (const line of body.split("\n")) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith("//") || trimmed.startsWith("@@")) continue;
+    const modelPattern = /model\s+(\w+)\s*\{([\s\S]*?)\n\}/g;
+    let match;
+    while ((match = modelPattern.exec(content)) !== null) {
+      const name = match[1];
+      if (seenNames.has(name)) continue;
+      const body = match[2];
+      const fields: SchemaField[] = [];
+      const relations: string[] = [];
 
-      const fieldMatch = trimmed.match(/^(\w+)\s+(\w+)(\?|\[\])?\s*(.*)/);
-      if (!fieldMatch) continue;
+      for (const line of body.split("\n")) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith("//") || trimmed.startsWith("@@")) continue;
 
-      const [, fieldName, fieldType, modifier, rest] = fieldMatch;
-      if (AUDIT_FIELDS.has(fieldName)) continue;
+        const fieldMatch = trimmed.match(/^(\w+)\s+(\w+)(\?|\[\])?\s*(.*)/);
+        if (!fieldMatch) continue;
 
-      // Skip relation fields (type is another model)
-      if (rest.includes("@relation")) {
-        relations.push(`${fieldName}: ${fieldType}${modifier || ""}`);
-        continue;
+        const [, fieldName, fieldType, modifier, rest] = fieldMatch;
+        if (AUDIT_FIELDS.has(fieldName)) continue;
+
+        if (rest.includes("@relation")) {
+          relations.push(`${fieldName}: ${fieldType}${modifier || ""}`);
+          continue;
+        }
+        if (modifier === "[]") {
+          relations.push(`${fieldName}: ${fieldType}[]`);
+          continue;
+        }
+
+        const flags: string[] = [];
+        if (rest.includes("@id")) flags.push("pk");
+        if (rest.includes("@unique")) flags.push("unique");
+        if (rest.includes("@default")) flags.push("default");
+        if (modifier === "?") flags.push("nullable");
+        if (fieldName.endsWith("Id") || fieldName.endsWith("_id")) flags.push("fk");
+
+        fields.push({ name: fieldName, type: fieldType, flags });
       }
-      if (modifier === "[]") {
-        relations.push(`${fieldName}: ${fieldType}[]`);
-        continue;
+
+      if (fields.length > 0) {
+        seenNames.add(name);
+        allModels.push({ name, fields, relations, orm: "prisma" });
       }
-
-      const flags: string[] = [];
-      if (rest.includes("@id")) flags.push("pk");
-      if (rest.includes("@unique")) flags.push("unique");
-      if (rest.includes("@default")) flags.push("default");
-      if (modifier === "?") flags.push("nullable");
-      if (fieldName.endsWith("Id") || fieldName.endsWith("_id")) flags.push("fk");
-
-      fields.push({ name: fieldName, type: fieldType, flags });
     }
 
-    if (fields.length > 0) {
-      models.push({ name, fields, relations, orm: "prisma" });
+    // Also detect enums
+    const enumPattern = /enum\s+(\w+)\s*\{([\s\S]*?)\n\}/g;
+    while ((match = enumPattern.exec(content)) !== null) {
+      const enumKey = `enum:${match[1]}`;
+      if (seenNames.has(enumKey)) continue;
+      const values = match[2]
+        .split("\n")
+        .map((l) => l.trim())
+        .filter((l) => l && !l.startsWith("//"));
+      seenNames.add(enumKey);
+      allModels.push({
+        name: enumKey,
+        fields: values.map((v) => ({ name: v, type: "enum", flags: [] })),
+        relations: [],
+        orm: "prisma",
+      });
     }
   }
 
-  // Also detect enums
-  const enumPattern = /enum\s+(\w+)\s*\{([\s\S]*?)\n\}/g;
-  while ((match = enumPattern.exec(content)) !== null) {
-    const name = match[1];
-    const values = match[2]
-      .split("\n")
-      .map((l) => l.trim())
-      .filter((l) => l && !l.startsWith("//"));
-    models.push({
-      name: `enum:${name}`,
-      fields: values.map((v) => ({ name: v, type: "enum", flags: [] })),
-      relations: [],
-      orm: "prisma",
-    });
-  }
-
-  return models;
+  return allModels;
 }
 
 // --- TypeORM ---
@@ -404,6 +414,16 @@ async function detectEloquentSchemas(
   for (const file of phpFiles) {
     const content = await readFileSafe(file);
     if (!content.includes("extends") || !content.includes("Model")) continue;
+    // Require at least one Eloquent-specific marker to avoid XML/ViewModel false positives
+    const hasEloquentMarker =
+      content.includes("Illuminate\\Database\\Eloquent") ||
+      content.includes("$fillable") ||
+      content.includes("$table") ||
+      content.includes("$this->hasMany") ||
+      content.includes("$this->belongsTo") ||
+      content.includes("$this->hasOne") ||
+      content.includes("$this->belongsToMany");
+    if (!hasEloquentMarker) continue;
     const rel = relative(project.root, file);
     models.push(...extractEloquentModels(rel, content));
   }

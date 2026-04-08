@@ -120,8 +120,8 @@ export function extractEloquentModels(
 ): SchemaModel[] {
   const models: SchemaModel[] = [];
 
-  // class ModelName extends Model (or extends \Illuminate\Database\Eloquent\Model)
-  const classPattern = /class\s+(\w+)\s+extends\s+(?:\\?[\w\\]+\\)?Model\b/g;
+  // class ModelName extends Model / BaseModel / AbstractModel / \Illuminate\...\Model
+  const classPattern = /class\s+(\w+)\s+extends\s+(?:\\?[\w\\]+\\)?(?:\w*Model)\b/g;
   let m: RegExpExecArray | null;
   while ((m = classPattern.exec(content)) !== null) {
     const name = m[1];
@@ -181,7 +181,9 @@ export function extractEloquentModels(
       }
     }
 
-    models.push({ name, fields, relations, orm: "eloquent" });
+    if (fields.length > 0 || relations.length > 0) {
+      models.push({ name, fields, relations, orm: "eloquent" });
+    }
   }
 
   return models;
