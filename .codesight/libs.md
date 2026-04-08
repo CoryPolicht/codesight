@@ -49,6 +49,7 @@
   - function detectGraphQLRoutes: (files, project) => Promise<RouteInfo[]>
   - function detectGRPCRoutes: (files, project) => Promise<RouteInfo[]>
   - function detectWebSocketRoutes: (files, project) => Promise<RouteInfo[]>
+- `src/detectors/knowledge.ts` — function detectKnowledge: (files, root) => Promise<KnowledgeMap>
 - `src/detectors/libs.ts`
   - function detectLibs: (files, project) => Promise<LibExport[]>
   - function name: (params) => returnType
@@ -63,7 +64,11 @@
 - `src/detectors/schema.ts` — function detectSchemas: (files, project) => Promise<SchemaModel[]>, const users
 - `src/detectors/tokens.ts` — function estimateTokens: (text) => number, function calculateTokenStats: (result, outputText, fileCount) => import("../types.js").TokenStats
 - `src/eval.ts` — function runEval: () => Promise<void>
-- `src/formatter.ts` — function writeOutput: (result, outputDir) => Promise<string>, function computeCrudGroups: (routes) => import("./types.js").CrudGroup[]
+- `src/formatter.ts`
+  - function writeOutput: (result, outputDir) => Promise<string>
+  - function computeCrudGroups: (routes) => import("./types.js").CrudGroup[]
+  - function formatKnowledge: (map, projectName, version) => string
+  - function writeKnowledgeOutput: (map, outputDir, projectName, version) => Promise<string>
 - `src/generators/ai-config.ts` — function generateAIConfigs: (result, root) => Promise<string[]>, function generateProfileConfig: (result, root, profile) => Promise<string>
 - `src/generators/html-report.ts` — function generateHtmlReport: (result, outputDir) => Promise<string>
 - `src/generators/wiki.ts`

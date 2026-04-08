@@ -2,8 +2,8 @@
 
 > **Stack:** raw-http | none | unknown | typescript
 
-> 4 routes + 1 graphql + 3 ws | 0 models | 0 components | 33 lib files | 6 env vars | 5 middleware | 6 events | 60% test coverage
-> **Token savings:** this file is ~3,000 tokens. Without it, AI exploration would cost ~24,100 tokens. **Saves ~21,000 tokens per conversation.**
+> 4 routes + 1 graphql + 3 ws | 0 models | 0 components | 34 lib files | 6 env vars | 5 middleware | 6 events | 60% test coverage
+> **Token savings:** this file is ~3,100 tokens. Without it, AI exploration would cost ~24,300 tokens. **Saves ~21,200 tokens per conversation.**
 
 ---
 
@@ -78,6 +78,7 @@
   - function detectGraphQLRoutes: (files, project) => Promise<RouteInfo[]>
   - function detectGRPCRoutes: (files, project) => Promise<RouteInfo[]>
   - function detectWebSocketRoutes: (files, project) => Promise<RouteInfo[]>
+- `src/detectors/knowledge.ts` — function detectKnowledge: (files, root) => Promise<KnowledgeMap>
 - `src/detectors/libs.ts`
   - function detectLibs: (files, project) => Promise<LibExport[]>
   - function name: (params) => returnType
@@ -92,7 +93,11 @@
 - `src/detectors/schema.ts` — function detectSchemas: (files, project) => Promise<SchemaModel[]>, const users
 - `src/detectors/tokens.ts` — function estimateTokens: (text) => number, function calculateTokenStats: (result, outputText, fileCount) => import("../types.js").TokenStats
 - `src/eval.ts` — function runEval: () => Promise<void>
-- `src/formatter.ts` — function writeOutput: (result, outputDir) => Promise<string>, function computeCrudGroups: (routes) => import("./types.js").CrudGroup[]
+- `src/formatter.ts`
+  - function writeOutput: (result, outputDir) => Promise<string>
+  - function computeCrudGroups: (routes) => import("./types.js").CrudGroup[]
+  - function formatKnowledge: (map, projectName, version) => string
+  - function writeKnowledgeOutput: (map, outputDir, projectName, version) => Promise<string>
 - `src/generators/ai-config.ts` — function generateAIConfigs: (result, root) => Promise<string[]>, function generateProfileConfig: (result, root, profile) => Promise<string>
 - `src/generators/html-report.ts` — function generateHtmlReport: (result, outputDir) => Promise<string>
 - `src/generators/wiki.ts`
@@ -152,8 +157,8 @@
 
 ## Most Imported Files (change these carefully)
 
-- `src/types.ts` — imported by **35** files
-- `src/scanner.ts` — imported by **14** files
+- `src/types.ts` — imported by **36** files
+- `src/scanner.ts` — imported by **15** files
 - `src/ast/loader.ts` — imported by **6** files
 - `src/ast/extract-dart.ts` — imported by **3** files
 - `src/ast/extract-swift.ts` — imported by **3** files
@@ -175,8 +180,8 @@
 
 ## Import Map (who imports what)
 
-- `src/types.ts` ← `src/ast/extract-components.ts`, `src/ast/extract-csharp.ts`, `src/ast/extract-dart.ts`, `src/ast/extract-go.ts`, `src/ast/extract-php.ts` +30 more
-- `src/scanner.ts` ← `src/detectors/components.ts`, `src/detectors/config.ts`, `src/detectors/contracts.ts`, `src/detectors/coverage.ts`, `src/detectors/events.ts` +9 more
+- `src/types.ts` ← `src/ast/extract-components.ts`, `src/ast/extract-csharp.ts`, `src/ast/extract-dart.ts`, `src/ast/extract-go.ts`, `src/ast/extract-php.ts` +31 more
+- `src/scanner.ts` ← `src/detectors/components.ts`, `src/detectors/config.ts`, `src/detectors/contracts.ts`, `src/detectors/coverage.ts`, `src/detectors/events.ts` +10 more
 - `src/ast/loader.ts` ← `src/ast/extract-components.ts`, `src/ast/extract-routes.ts`, `src/ast/extract-schema.ts`, `src/detectors/components.ts`, `src/detectors/routes.ts` +1 more
 - `src/ast/extract-dart.ts` ← `src/detectors/components.ts`, `src/detectors/libs.ts`, `src/detectors/routes.ts`
 - `src/ast/extract-swift.ts` ← `src/detectors/components.ts`, `src/detectors/libs.ts`, `src/detectors/routes.ts`

@@ -20,8 +20,8 @@
 
 Changes to these files have the widest blast radius across the codebase:
 
-- `src/types.ts` — imported by **35** files
-- `src/scanner.ts` — imported by **14** files
+- `src/types.ts` — imported by **36** files
+- `src/scanner.ts` — imported by **15** files
 - `src/ast/loader.ts` — imported by **6** files
 - `src/ast/extract-dart.ts` — imported by **3** files
 - `src/ast/extract-swift.ts` — imported by **3** files
