@@ -36,6 +36,10 @@ interface JsonRpcResponse {
 
 let transportMode: "framed" | "newline" = "framed";
 
+function looksLikeFramedTransport(buffer: string) {
+  return /^Content-Length\s*:/i.test(buffer);
+}
+
 function send(msg: JsonRpcResponse) {
   const json = JSON.stringify(msg);
   if (transportMode === "newline") {
@@ -603,6 +607,8 @@ export async function startMCPServer() {
     while (true) {
       const headerEnd = buffer.indexOf("\r\n\r\n");
       if (headerEnd === -1) {
+        if (looksLikeFramedTransport(buffer)) break;
+
         const newlineIndex = buffer.indexOf("\n");
         if (newlineIndex === -1) break;
 

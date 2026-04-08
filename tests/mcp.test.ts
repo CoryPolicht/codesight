@@ -190,3 +190,33 @@ test("MCP server responds to newline-delimited initialize used by Claude health 
     await stopServer(child);
   }
 });
+
+test("MCP server waits for full framed headers split across chunks", async () => {
+  const child = startServer();
+  try {
+    const input = child.stdin;
+    if (!input) throw new Error("stdin unavailable");
+
+    const payload = JSON.stringify({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "initialize",
+      params: {
+        protocolVersion: "2024-11-05",
+        capabilities: {},
+        clientInfo: { name: "chunked-client", version: "1.0.0" },
+      },
+    });
+
+    input.write(`Content-Length: ${Buffer.byteLength(payload)}\r\n`);
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 25));
+    input.write(`\r\n${payload}`);
+
+    const response = await readFramedResponse(child);
+    assert.equal(response.jsonrpc, "2.0");
+    assert.equal(response.id, 2);
+    assert.equal(response.result?.serverInfo?.name, "codesight");
+  } finally {
+    await stopServer(child);
+  }
+});
