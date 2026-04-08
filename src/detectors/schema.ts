@@ -4,6 +4,7 @@ import { loadTypeScript } from "../ast/loader.js";
 import { extractDrizzleSchemaAST, extractTypeORMSchemaAST } from "../ast/extract-schema.js";
 import { extractSQLAlchemyAST } from "../ast/extract-python.js";
 import { extractGORMModelsStructured } from "../ast/extract-go.js";
+import { extractEFCoreModels } from "../ast/extract-csharp.js";
 import type { SchemaModel, SchemaField, ProjectInfo } from "../types.js";
 
 const AUDIT_FIELDS = new Set([
@@ -37,6 +38,9 @@ export async function detectSchemas(
         break;
       case "gorm":
         models.push(...(await detectGORMSchemas(files, project)));
+        break;
+      case "efcore":
+        models.push(...(await detectEFCoreSchemas(files, project)));
         break;
     }
   }
@@ -384,3 +388,12 @@ async function detectGORMSchemas(
 
   return models;
 }
+
+// --- EF Core ---
+async function detectEFCoreSchemas(
+  files: string[],
+  project: ProjectInfo
+): Promise<SchemaModel[]> {
+  return extractEFCoreModels(files, project.root);
+}
+

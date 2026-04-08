@@ -1,0 +1,32 @@
+{
+  "routes": [
+    { "method": "GET",    "path": "/api/users" },
+    { "method": "GET",    "path": "/api/users/{id}" },
+    { "method": "POST",   "path": "/api/users" },
+    { "method": "PUT",    "path": "/api/users/{id}" },
+    { "method": "DELETE", "path": "/api/users/{id}" },
+    { "method": "POST",   "path": "/api/auth/login" },
+    { "method": "POST",   "path": "/api/auth/register" },
+    { "method": "GET",    "path": "/api/orders" },
+    { "method": "GET",    "path": "/api/orders/{id}" },
+    { "method": "POST",   "path": "/api/orders" },
+    { "method": "GET",    "path": "/api/products" },
+    { "method": "POST",   "path": "/api/products" }
+  ],
+  "models": [
+    {
+      "name": "User",
+      "fields": ["Id", "Email", "PasswordHash", "Name"]
+    },
+    {
+      "name": "Order",
+      "fields": ["Id", "Total", "Status", "UserId"]
+    },
+    {
+      "name": "Product",
+      "fields": ["Id", "Name", "Price", "Stock"]
+    }
+  ],
+  "envVars": ["JWT_SECRET", "CONNECTIONSTRINGS_DEFAULTCONNECTION", "JWTSETTINGS_SECRET"],
+  "middleware": ["auth", "cors"]
+}

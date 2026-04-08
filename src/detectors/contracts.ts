@@ -61,6 +61,10 @@ export async function enrichRouteContracts(
       case "flask":
         enrichFlaskRoute(route, content);
         break;
+      case "aspnet-minimal":
+      case "aspnet-webapi":
+        enrichCSharpRoute(route, content);
+        break;
     }
   }
 
@@ -148,5 +152,34 @@ function enrichFlaskRoute(route: RouteInfo, content: string) {
     if (keys.length > 0 && keys.length <= 8) {
       route.responseType = `{ ${keys.join(", ")} }`;
     }
+  }
+}
+
+function enrichCSharpRoute(route: RouteInfo, content: string) {
+  // ActionResult<T> — return type annotation on method
+  const actionResultMatch = content.match(/ActionResult\s*<\s*([^>]+)\s*>/);
+  if (actionResultMatch) {
+    route.responseType = actionResultMatch[1].trim();
+    return;
+  }
+
+  // Results.Ok<T>(...) — Minimal API
+  const resultsOkMatch = content.match(/Results\.Ok\s*<\s*([^>]+)\s*>/);
+  if (resultsOkMatch) {
+    route.responseType = resultsOkMatch[1].trim();
+    return;
+  }
+
+  // TypedResults.Ok<T>(...) — .NET 7+ typed results
+  const typedResultsMatch = content.match(/TypedResults\.Ok\s*<\s*([^>]+)\s*>/);
+  if (typedResultsMatch) {
+    route.responseType = typedResultsMatch[1].trim();
+    return;
+  }
+
+  // [ProducesResponseType(typeof(T), 200)]
+  const producesMatch = content.match(/\[ProducesResponseType\s*\(\s*typeof\s*\(\s*([^)]+)\s*\)/);
+  if (producesMatch) {
+    route.responseType = producesMatch[1].trim();
   }
 }

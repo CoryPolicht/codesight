@@ -25,11 +25,13 @@ export type Framework =
   | "spring"
   | "actix"
   | "axum"
+  | "aspnet-minimal"
+  | "aspnet-webapi"
   | "raw-http"
   | "php"
   | "unknown";
 
-export type ORM = "drizzle" | "prisma" | "typeorm" | "sqlalchemy" | "gorm" | "mongoose" | "sequelize" | "activerecord" | "ecto" | "unknown";
+export type ORM = "drizzle" | "prisma" | "typeorm" | "sqlalchemy" | "gorm" | "mongoose" | "sequelize" | "activerecord" | "ecto" | "efcore" | "unknown";
 
 export type ComponentFramework = "react" | "vue" | "svelte" | "unknown";
 
@@ -41,7 +43,7 @@ export interface ProjectInfo {
   componentFramework: ComponentFramework;
   isMonorepo: boolean;
   workspaces: WorkspaceInfo[];
-  language: "typescript" | "javascript" | "python" | "go" | "ruby" | "elixir" | "java" | "kotlin" | "rust" | "php" | "mixed";
+  language: "typescript" | "javascript" | "python" | "go" | "ruby" | "elixir" | "java" | "kotlin" | "rust" | "php" | "csharp" | "mixed";
 }
 
 export interface WorkspaceInfo {

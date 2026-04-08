@@ -31,6 +31,8 @@ const IGNORE_DIRS = new Set([
   "vendor",
   ".cache",
   ".parcel-cache",
+  "bin",
+  "obj",
 ]);
 
 const CODE_EXTENSIONS = new Set([
@@ -51,6 +53,7 @@ const CODE_EXTENSIONS = new Set([
   ".kt",
   ".rs",
   ".php",
+  ".cs",
 ]);
 
 export async function collectFiles(
@@ -281,6 +284,19 @@ async function detectFrameworks(
     frameworks.push("php");
   }
 
+  // .NET / ASP.NET Core
+  const dotnetDeps = await getDotnetDeps(root);
+  if (dotnetDeps.length > 0) {
+    const hasAspNet = dotnetDeps.some((d) =>
+      d.includes("Microsoft.AspNetCore") ||
+      d.includes("Microsoft.NET.Sdk.Web")
+    );
+    if (hasAspNet) {
+      frameworks.push("aspnet-minimal");
+      frameworks.push("aspnet-webapi");
+    }
+  }
+
   // Fallback: detect raw http.createServer if no other frameworks found
   if (frameworks.length === 0) {
     frameworks.push("raw-http");
@@ -326,6 +342,12 @@ async function detectORMs(
     } catch {}
   }
 
+  // EF Core
+  const dotnetDeps = await getDotnetDeps(root);
+  if (dotnetDeps.some((d) => d.includes("EntityFrameworkCore") || d.includes("Microsoft.EntityFrameworkCore"))) {
+    orms.push("efcore");
+  }
+
   return orms;
 }
 
@@ -341,7 +363,7 @@ function detectComponentFramework(
 async function detectLanguage(
   root: string,
   deps: Record<string, string>
-): Promise<"typescript" | "javascript" | "python" | "go" | "ruby" | "elixir" | "java" | "kotlin" | "rust" | "php" | "mixed"> {
+): Promise<"typescript" | "javascript" | "python" | "go" | "ruby" | "elixir" | "java" | "kotlin" | "rust" | "php" | "csharp" | "mixed"> {
   const hasTsConfig = await fileExists(join(root, "tsconfig.json"));
   const hasPyProject = await fileExists(join(root, "pyproject.toml")) || await fileExists(join(root, "backend/pyproject.toml"));
   const hasGoMod = await fileExists(join(root, "go.mod"));
@@ -352,6 +374,8 @@ async function detectLanguage(
   const hasBuildGradle = await fileExists(join(root, "build.gradle")) || await fileExists(join(root, "build.gradle.kts"));
   const hasCargoToml = await fileExists(join(root, "Cargo.toml"));
   const hasComposerJson = await fileExists(join(root, "composer.json"));
+  const dotnetDeps = await getDotnetDeps(root);
+  const hasCsproj = dotnetDeps.length > 0;
 
   const langs: string[] = [];
   if (hasTsConfig || deps["typescript"]) langs.push("typescript");
@@ -363,6 +387,7 @@ async function detectLanguage(
   else if (hasPomXml) langs.push("java");
   if (hasCargoToml) langs.push("rust");
   if (hasComposerJson) langs.push("php");
+  if (hasCsproj) langs.push("csharp");
 
   if (langs.length > 1) return "mixed";
   if (langs.length === 1) return langs[0] as any;
@@ -372,6 +397,8 @@ async function detectLanguage(
     const entries = await readdir(root);
     const hasPHPFiles = entries.some((e) => e.endsWith(".php"));
     if (hasPHPFiles) return "php";
+    const hasCsFiles = entries.some((e) => e.endsWith(".cs"));
+    if (hasCsFiles) return "csharp";
   } catch {}
 
   return "javascript";
@@ -439,6 +466,44 @@ async function getGoDeps(root: string): Promise<string[]> {
       if (main.includes("net/http")) deps.push("net/http");
     } catch {}
   } catch {}
+  return deps;
+}
+
+async function getDotnetDeps(root: string): Promise<string[]> {
+  const deps: string[] = [];
+  // Find all .csproj files (max depth 3)
+  async function findCsproj(dir: string, depth: number): Promise<string[]> {
+    if (depth > 3) return [];
+    const found: string[] = [];
+    try {
+      const entries = await readdir(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (entry.isFile() && entry.name.endsWith(".csproj")) {
+          found.push(join(dir, entry.name));
+        } else if (entry.isDirectory() && !IGNORE_DIRS.has(entry.name) && !entry.name.startsWith(".")) {
+          found.push(...await findCsproj(join(dir, entry.name), depth + 1));
+        }
+      }
+    } catch {}
+    return found;
+  }
+
+  const csprojFiles = await findCsproj(root, 0);
+  for (const csproj of csprojFiles) {
+    try {
+      const content = await readFile(csproj, "utf-8");
+      // Extract <PackageReference Include="..." /> or <FrameworkReference Include="..." />
+      const pkgPattern = /<(?:PackageReference|FrameworkReference)\s+Include\s*=\s*"([^"]+)"/g;
+      let match;
+      while ((match = pkgPattern.exec(content)) !== null) {
+        if (!deps.includes(match[1])) deps.push(match[1]);
+      }
+      // Detect web SDK: <Project Sdk="Microsoft.NET.Sdk.Web">
+      if (content.includes("Microsoft.NET.Sdk.Web")) {
+        if (!deps.includes("Microsoft.NET.Sdk.Web")) deps.push("Microsoft.NET.Sdk.Web");
+      }
+    } catch {}
+  }
   return deps;
 }
 

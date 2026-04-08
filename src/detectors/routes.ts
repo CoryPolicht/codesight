@@ -4,13 +4,14 @@ import { loadTypeScript } from "../ast/loader.js";
 import { extractRoutesAST } from "../ast/extract-routes.js";
 import { extractPythonRoutesAST } from "../ast/extract-python.js";
 import { extractGoRoutesStructured } from "../ast/extract-go.js";
+import { extractCSharpRoutes } from "../ast/extract-csharp.js";
 import type { RouteInfo, Framework, ProjectInfo } from "../types.js";
 
 const HTTP_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"];
 
 const TAG_PATTERNS: [string, RegExp[]][] = [
-  ["auth", [/auth/i, /jwt/i, /token/i, /session/i, /bearer/i, /passport/i, /clerk/i, /betterAuth/i, /better-auth/i]],
-  ["db", [/prisma/i, /drizzle/i, /typeorm/i, /sequelize/i, /mongoose/i, /knex/i, /sql/i, /\.query\(/i, /\.execute\(/i, /\.findMany\(/i, /\.findFirst\(/i, /\.insert\(/i, /\.update\(/i, /\.delete\(/i]],
+  ["auth", [/auth/i, /jwt/i, /token/i, /session/i, /bearer/i, /passport/i, /clerk/i, /betterAuth/i, /better-auth/i, /\[Authorize\]/i, /IAuthorizationService/i]],
+  ["db", [/prisma/i, /drizzle/i, /typeorm/i, /sequelize/i, /mongoose/i, /knex/i, /sql/i, /\.query\(/i, /\.execute\(/i, /\.findMany\(/i, /\.findFirst\(/i, /\.insert\(/i, /\.update\(/i, /\.delete\(/i, /_context\./i, /DbContext/i, /\.SaveChangesAsync/i]],
   ["cache", [/redis/i, /cache/i, /memcache/i, /\.setex\(/i, /\.getex\(/i]],
   ["queue", [/bullmq/i, /bull\b/i, /\.add\(\s*['"`]/i, /queue/i]],
   ["email", [/resend/i, /sendgrid/i, /nodemailer/i, /\.send\(\s*\{[\s\S]*?to:/i]],
@@ -110,6 +111,12 @@ export async function detectRoutes(
         break;
       case "php":
         routes.push(...(await detectPHPRoutes(files, project)));
+        break;
+      case "aspnet-minimal":
+        routes.push(...(await detectAspNetMinimalRoutes(files, project)));
+        break;
+      case "aspnet-webapi":
+        routes.push(...(await detectAspNetWebApiRoutes(files, project)));
         break;
     }
   }
@@ -1202,6 +1209,40 @@ async function detectPHPRoutes(
     seen.add(key);
     return true;
   });
+}
+
+// --- ASP.NET Core Minimal API ---
+async function detectAspNetMinimalRoutes(
+  files: string[],
+  project: ProjectInfo
+): Promise<RouteInfo[]> {
+  const csFiles = files.filter((f) => f.endsWith(".cs"));
+  if (csFiles.length === 0) return [];
+
+  // Build per-file tags then delegate to extractor
+  const allTags = detectTags(
+    (await Promise.all(csFiles.map((f) => readFileSafe(f)))).join("\n")
+  );
+
+  return extractCSharpRoutes(csFiles, project.root, "aspnet-minimal", allTags);
+}
+
+// --- ASP.NET Core Web API Controllers ---
+async function detectAspNetWebApiRoutes(
+  files: string[],
+  project: ProjectInfo
+): Promise<RouteInfo[]> {
+  const csFiles = files.filter(
+    (f) => f.endsWith(".cs") && (basename(f).endsWith("Controller.cs") || f.endsWith(".cs"))
+  );
+  if (csFiles.length === 0) return [];
+
+  // Build per-file tags then delegate to extractor
+  const allTags = detectTags(
+    (await Promise.all(csFiles.map((f) => readFileSafe(f)))).join("\n")
+  );
+
+  return extractCSharpRoutes(csFiles, project.root, "aspnet-webapi", allTags);
 }
 
 // ─── Route Prefix Resolution ──────────────────────────────────────────────────

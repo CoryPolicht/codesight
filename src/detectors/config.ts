@@ -25,6 +25,9 @@ const CONFIG_FILES = [
   "vercel.json",
   "fly.toml",
   "render.yaml",
+  "appsettings.json",
+  "appsettings.Development.json",
+  "appsettings.Production.json",
 ];
 
 export async function detectConfig(
@@ -105,7 +108,7 @@ async function detectEnvVars(
   // Scan code for process.env.VAR_NAME or os.environ["VAR_NAME"] or os.Getenv("VAR_NAME")
   const codeFiles = files.filter(
     (f) =>
-      f.match(/\.(ts|js|tsx|jsx|mjs|cjs|py|go)$/) &&
+      f.match(/\.(ts|js|tsx|jsx|mjs|cjs|py|go|cs)$/) &&
       !f.includes("node_modules")
   );
 
@@ -167,6 +170,52 @@ async function detectEnvVars(
         envMap.set(name, { name, source: rel, hasDefault: false });
       }
     }
+
+    // C#: Environment.GetEnvironmentVariable("VAR")
+    const csEnvPattern = /Environment\.GetEnvironmentVariable\s*\(\s*["']([A-Z_][A-Z0-9_]*)["']\s*\)/g;
+    while ((match = csEnvPattern.exec(content)) !== null) {
+      const name = match[1];
+      if (!envMap.has(name)) {
+        envMap.set(name, { name, source: rel, hasDefault: false });
+      }
+    }
+
+    // C#: Configuration["Key"] or Configuration.GetValue<T>("Key") or Configuration.GetConnectionString("Key")
+    const csConfigPattern = /Configuration(?:\[\s*["']([A-Z_][A-Z0-9_:]*)["']\s*\]|\.GetValue\s*<[^>]+>\s*\(\s*["']([A-Z_][A-Z0-9_:]*)["']|\.GetConnectionString\s*\(\s*["']([\w]+)["'])/g;
+    while ((match = csConfigPattern.exec(content)) !== null) {
+      const name = (match[1] || match[2] || match[3] || "").replace(/:/g, "_").toUpperCase();
+      if (name && !envMap.has(name)) {
+        envMap.set(name, { name, source: rel, hasDefault: false });
+      }
+    }
+  }
+
+  // Parse appsettings.json leaf keys as config entries
+  const appsettingsFiles = files.filter(
+    (f) => basename(f) === "appsettings.json" || basename(f) === "appsettings.Development.json"
+  );
+  for (const file of appsettingsFiles) {
+    const content = await readFileSafe(file);
+    if (!content) continue;
+    try {
+      const parsed = JSON.parse(content);
+      const rel = relative(project.root, file);
+      const extractLeaves = (obj: unknown, prefix: string) => {
+        if (typeof obj !== "object" || obj === null || Array.isArray(obj)) return;
+        for (const [key, val] of Object.entries(obj as Record<string, unknown>)) {
+          const fullKey = prefix ? `${prefix}:${key}` : key;
+          if (typeof val === "string" || typeof val === "number" || typeof val === "boolean") {
+            const envName = fullKey.replace(/:/g, "_").replace(/[^A-Z0-9_]/gi, "_").toUpperCase();
+            if (!envMap.has(envName)) {
+              envMap.set(envName, { name: fullKey, source: rel, hasDefault: val !== "" && val !== null });
+            }
+          } else {
+            extractLeaves(val, fullKey);
+          }
+        }
+      };
+      extractLeaves(parsed, "");
+    } catch {}
   }
 
   return Array.from(envMap.values()).sort((a, b) =>

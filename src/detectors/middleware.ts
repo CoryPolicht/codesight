@@ -3,33 +3,13 @@ import { readFileSafe } from "../scanner.js";
 import type { MiddlewareInfo, ProjectInfo } from "../types.js";
 
 const MIDDLEWARE_PATTERNS: [MiddlewareInfo["type"], RegExp[]][] = [
-  [
-    "auth",
-    [
-      /auth/i,
-      /jwt/i,
-      /bearer/i,
-      /passport/i,
-      /clerk/i,
-      /better-?auth/i,
-      /session/i,
-      /requireAuth/i,
-      /isAuthenticated/i,
-      /verifyToken/i,
-      /protect/i,
-    ],
-  ],
-  [
-    "rate-limit",
-    [
-      /rate.?limit/i,
-      /throttle/i,
-      /rateLimit/i,
-      /rateLimiter/i,
-      /slowDown/i,
-    ],
-  ],
-  ["cors", [/cors/i, /cross.?origin/i, /Access-Control/i]],
+  ["auth", [
+    /auth/i, /jwt/i, /bearer/i, /passport/i, /clerk/i, /better-?auth/i,
+    /session/i, /requireAuth/i, /isAuthenticated/i, /verifyToken/i, /protect/i,
+    /UseAuthentication/i, /UseAuthorization/i,
+  ]],
+  ["rate-limit", [/rate.?limit/i, /throttle/i, /rateLimit/i, /rateLimiter/i, /slowDown/i, /UseRateLimiting/i]],
+  ["cors", [/cors/i, /cross.?origin/i, /Access-Control/i, /UseCors/i]],
   [
     "validation",
     [
@@ -60,6 +40,7 @@ const MIDDLEWARE_PATTERNS: [MiddlewareInfo["type"], RegExp[]][] = [
       /error.?middleware/i,
       /onError/i,
       /exception.?handler/i,
+      /UseExceptionHandler/i,
     ],
   ],
 ];
@@ -111,7 +92,7 @@ export async function detectMiddleware(
   // Scan for inline middleware usage in route files
   const routeFiles = files.filter(
     (f) =>
-      (f.match(/\.(ts|js|mjs|py|go)$/) &&
+      (f.match(/\.(ts|js|mjs|py|go|cs)$/) &&
         !f.includes("node_modules") &&
         !middlewareFiles.includes(f))
   );
@@ -120,17 +101,26 @@ export async function detectMiddleware(
     const content = await readFileSafe(file);
     const rel = relative(project.root, file);
 
-    // app.use(cors()) or app.use(rateLimit(...))
+    // JS/TS: app.use(cors()) or app.use(rateLimit(...))
     const usePattern = /\.use\s*\(\s*(\w+)\s*\(/g;
     let match;
     while ((match = usePattern.exec(content)) !== null) {
       const fnName = match[1];
       const type = classifyMiddleware(fnName, "");
       if (type !== "custom") {
-        // Deduplicate
         if (!middleware.some((m) => m.name === fnName)) {
           middleware.push({ name: fnName, file: rel, type });
         }
+      }
+    }
+
+    // C#: app.UseAuthentication(), app.UseAuthorization(), app.UseCors(), etc.
+    const aspNetUsePattern = /app\.Use(Authentication|Authorization|Cors|RateLimiting|ExceptionHandler|HttpsRedirection|Routing|Swagger|StaticFiles)\s*\(/g;
+    while ((match = aspNetUsePattern.exec(content)) !== null) {
+      const methodName = `Use${match[1]}`;
+      const type = classifyMiddleware(methodName, "");
+      if (!middleware.some((m) => m.name === methodName)) {
+        middleware.push({ name: methodName, file: rel, type });
       }
     }
   }
