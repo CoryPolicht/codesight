@@ -2,7 +2,7 @@
 
 ### Your AI assistant wastes thousands of tokens every conversation just figuring out your project. codesight fixes that in one command.
 
-**Zero dependencies. AST precision. 30+ framework detectors. 12 ORM parsers. 11 MCP tools. One `npx` call.**
+**Zero dependencies. AST precision. 30+ framework detectors. 13 ORM parsers. 13 MCP tools. One `npx` call.**
 
 **Works with TypeScript, JavaScript, Python, Go, Ruby, Elixir, Java, Kotlin, Rust, PHP, Dart, Swift, and C#.** TypeScript projects get full AST precision. Everything else uses battle-tested regex detection across the same 30+ frameworks.
 
@@ -27,7 +27,7 @@
 ---
 
 ```
-0 dependencies · Node.js >= 18 · 27 tests · 11 MCP tools · MIT · tested on 25+ OSS projects across 14 languages
+0 dependencies · Node.js >= 18 · 27 tests · 13 MCP tools · MIT · tested on 25+ OSS projects across 14 languages
 ```
 
 ## Works With
@@ -43,13 +43,15 @@ npx codesight
 That's it. Run it in any project root. No config, no setup, no API keys.
 
 ```bash
-npx codesight --wiki                # Generate wiki knowledge base (.codesight/wiki/)
-npx codesight --init                # Generate CLAUDE.md, .cursorrules, codex.md, AGENTS.md
-npx codesight --open                # Open interactive HTML report in browser
-npx codesight --mcp                 # Start as MCP server (11 tools) for Claude Code / Cursor
-npx codesight --blast src/lib/db.ts # Show blast radius for a file
-npx codesight --profile claude-code # Generate optimized config for a specific AI tool
-npx codesight --benchmark           # Show detailed token savings breakdown
+npx codesight --wiki                       # Generate wiki knowledge base (.codesight/wiki/)
+npx codesight --init                       # Generate CLAUDE.md, .cursorrules, codex.md, AGENTS.md
+npx codesight --open                       # Open interactive HTML report in browser
+npx codesight --mcp                        # Start as MCP server (13 tools) for Claude Code / Cursor
+npx codesight --blast src/lib/db.ts        # Show blast radius for a file
+npx codesight --profile claude-code        # Generate optimized config for a specific AI tool
+npx codesight --benchmark                  # Show detailed token savings breakdown
+npx codesight --mode knowledge             # Map knowledge base (.md notes → KNOWLEDGE.md)
+npx codesight --mode knowledge ~/vault     # Map Obsidian vault, ADRs, meeting notes, retros
 ```
 
 ## Wiki Knowledge Base (v1.6.2)
@@ -97,6 +99,69 @@ Instead of loading the full 5K token context map every conversation, your AI rea
 | `codesight_lint_wiki` | Health check: orphan articles, missing cross-links, stale content |
 
 The key difference from general-purpose wiki tools: codesight already knows your routes, schema, blast radius, and middleware from AST — no LLM needed to extract code structure. The wiki is a narrative layer on top of data your codebase already contains.
+
+## Knowledge Mode (v1.9.3)
+
+Not just code — your decisions, meeting notes, ADRs, and retrospectives carry as much context as the codebase itself. `--mode knowledge` maps them the same way codesight maps code.
+
+```bash
+npx codesight --mode knowledge              # Scan current directory for .md files
+npx codesight --mode knowledge ~/vault      # Scan an Obsidian vault
+npx codesight --mode knowledge ./docs       # Scan a project docs folder
+```
+
+Outputs `.codesight/KNOWLEDGE.md` — a compact AI context primer:
+
+```markdown
+# Knowledge Map — my-project
+> 47 notes · 12 decisions · 8 open questions · 2025-09-01 → 2026-04-01
+
+## Key Decisions (12)
+- [2026-03-20] Going with Polar.sh over Stripe Connect — simpler global payments
+- [2026-03-15] Decided to use PostgreSQL — better JSON support and Drizzle compatibility
+- [2026-02-10] Will use Redis for rate limiting — BullMQ already in stack
+
+## Open Questions (8)
+- Should we support PayPal later?
+- When do we start the Stripe marketplace application?
+
+## Note Index (47)
+
+### Decision Records (8)
+- `decisions/adr-002-payments.md` — 2026-03-20 — Going with Polar.sh over Stripe Connect
+- `decisions/adr-001-database.md` — 2026-03-15 — We need a relational database...
+
+### Meeting Notes (14)
+### Retrospectives (6)
+### Specs & PRDs (5)
+### Research (4)
+```
+
+**What it detects automatically:**
+
+| Note type | Signals |
+|---|---|
+| Decision records | ADR format (`## Decision`), "decided to", "going with", "chose X over Y" |
+| Meeting notes | `Attendees:`, `Action items:`, filename: `standup`, `sync`, `1on1` |
+| Retrospectives | "What went well", "Stop doing", filename: `retro`, `retrospective` |
+| Specs / PRDs | `## Goals`, `## Requirements`, filename: `prd`, `spec`, `roadmap` |
+| Research | filename: `research`, `analysis`, `benchmark`, `comparison` |
+| Session logs | filename: `session`, `daily`, `weekly` |
+
+**Supports:**
+- Obsidian vaults (YAML frontmatter, `[[backlinks]]`, `#tags`)
+- Notion exports (`.md` files with frontmatter)
+- ADR tooling (`adr-tools`, `Log4brains`, raw markdown)
+- Any folder of markdown files
+
+**Used together:**
+
+```
+Read .codesight/CODESIGHT.md   → what the code does
+Read .codesight/KNOWLEDGE.md   → why decisions were made
+```
+
+CI: add `npx codesight --mode knowledge` alongside your existing codesight step. Both files stay current on every push.
 
 ## Benchmarks (Real Projects)
 
@@ -424,8 +489,8 @@ The 1.3x multiplier accounts for AI revisiting files during multi-turn conversat
 
 | Category | Supported |
 |---|---|
-| **Routes** | Hono, Express, Fastify, Next.js (App + Pages), Koa, NestJS, tRPC, Elysia, AdonisJS, SvelteKit, Remix, Nuxt, FastAPI, Flask, Django, Go (net/http, Gin, Fiber, Echo, Chi), Rails, Phoenix, Spring Boot, Actix, Axum, Laravel, ASP.NET Core (controllers + minimal API), Vapor, Flutter (go_router), raw http.createServer |
-| **Schema** | Drizzle, Prisma, TypeORM, Mongoose, Sequelize, SQLAlchemy, Django ORM, ActiveRecord, Ecto, Eloquent, Entity Framework (11 ORMs) |
+| **Routes** | Hono, Express, Fastify, Next.js (App + Pages), Koa, NestJS, tRPC, Elysia, AdonisJS, SvelteKit, Remix, Nuxt, FastAPI, Flask, Django, Go (net/http, Gin, Fiber, Echo, Chi), Rails, Phoenix, Spring Boot, Ktor, Actix, Axum, Laravel, ASP.NET Core (controllers + minimal API), Vapor, Flutter (go_router), raw http.createServer |
+| **Schema** | Drizzle, Prisma, TypeORM, Mongoose, Sequelize, SQLAlchemy, Django ORM, ActiveRecord, Ecto, Eloquent, Entity Framework, Exposed (13 ORMs) |
 | **Components** | React, Vue, Svelte, Flutter widgets (StatelessWidget, StatefulWidget, ConsumerWidget), SwiftUI views (auto-filters shadcn/ui and Radix primitives) |
 | **Libraries** | TypeScript, JavaScript, Python, Go, Dart, Swift, C#, PHP (exports with function signatures) |
 | **Middleware** | Auth, rate limiting, CORS, validation, logging, error handlers |
@@ -452,7 +517,7 @@ Generates ready-to-use instruction files for every major AI coding tool at once:
 
 Each file is pre-filled with your project's stack, architecture, high-impact files, and required env vars. Your AI reads it on startup and starts with full context from the first message.
 
-## MCP Server (11 Tools)
+## MCP Server (13 Tools)
 
 ```bash
 npx codesight --mcp
@@ -496,6 +561,8 @@ startup_timeout_sec = 60
 | `codesight_get_blast_radius` | Impact analysis before changing a file |
 | `codesight_get_env` | Environment variables (filter: required only) |
 | `codesight_get_hot_files` | Most imported files with configurable limit |
+| `codesight_get_events` | Background events: BullMQ queues, Kafka topics, Redis pub/sub, EventEmitter |
+| `codesight_get_coverage` | Test coverage map: which routes and models have test files |
 | `codesight_refresh` | Force re-scan (results are cached per session) |
 
 Your AI asks for exactly what it needs instead of loading the entire context map. Session caching means the first call scans, subsequent calls return instantly.
@@ -569,7 +636,7 @@ npx codesight --wiki                       # Generate wiki knowledge base
 npx codesight --init                       # Generate AI config files
 npx codesight --open                       # Open visual HTML report
 npx codesight --html                       # Generate HTML report without opening
-npx codesight --mcp                        # Start MCP server (11 tools)
+npx codesight --mcp                        # Start MCP server (13 tools)
 npx codesight --blast src/lib/db.ts        # Show blast radius for a file
 npx codesight --profile claude-code        # Optimized config for specific tool
 npx codesight --watch                      # Watch mode (add --wiki to auto-regenerate wiki)
@@ -577,7 +644,11 @@ npx codesight --wiki --watch               # Watch + auto-regenerate wiki on cha
 npx codesight --hook                       # Install git pre-commit hook (includes wiki)
 npx codesight --benchmark                  # Detailed token savings breakdown
 npx codesight --json                       # Output as JSON
-npx codesight -o .ai-context              # Custom output directory
+npx codesight --mode knowledge             # Map .md knowledge base → KNOWLEDGE.md
+npx codesight --mode knowledge ~/vault     # Map Obsidian vault or any .md folder
+npx codesight --max-tokens 50000           # Trim output to fit token budget
+npx codesight --since HEAD~5               # Show routes from last 5 commits only
+npx codesight -o .ai-context               # Custom output directory
 npx codesight -d 5                         # Limit directory depth
 ```
 
