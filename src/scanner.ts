@@ -110,21 +110,36 @@ export async function detectProject(root: string): Promise<ProjectInfo> {
   if (isMonorepo) {
     const wsPatterns = await getWorkspacePatterns(root, pkg);
     for (const pattern of wsPatterns) {
-      const wsRoot = join(root, pattern.replace("/*", ""));
-      try {
-        const wsDirs = await readdir(wsRoot, { withFileTypes: true });
-        for (const d of wsDirs) {
-          if (!d.isDirectory() || d.name.startsWith(".")) continue;
-          const wsPath = join(wsRoot, d.name);
+      if (pattern.includes("*")) {
+        // Glob pattern (e.g. "packages/*") — enumerate subdirectories
+        const wsRoot = join(root, pattern.replace("/*", ""));
+        try {
+          const wsDirs = await readdir(wsRoot, { withFileTypes: true });
+          for (const d of wsDirs) {
+            if (!d.isDirectory() || d.name.startsWith(".")) continue;
+            const wsPath = join(wsRoot, d.name);
+            const wsPkg = await readJsonSafe(join(wsPath, "package.json"));
+            workspaces.push({
+              name: wsPkg.name || d.name,
+              path: relative(root, wsPath),
+              frameworks: await detectFrameworks(wsPath, wsPkg),
+              orms: await detectORMs(wsPath, wsPkg),
+            });
+          }
+        } catch {}
+      } else {
+        // Direct path (e.g. "app", "api") — treat the path itself as a workspace
+        const wsPath = join(root, pattern);
+        try {
           const wsPkg = await readJsonSafe(join(wsPath, "package.json"));
           workspaces.push({
-            name: wsPkg.name || d.name,
-            path: relative(root, wsPath),
+            name: wsPkg.name || basename(pattern),
+            path: pattern,
             frameworks: await detectFrameworks(wsPath, wsPkg),
             orms: await detectORMs(wsPath, wsPkg),
           });
-        }
-      } catch {}
+        } catch {}
+      }
     }
   }
 
@@ -151,6 +166,10 @@ export async function detectProject(root: string): Promise<ProjectInfo> {
       for (const orm of ws.orms) {
         if (!orms.includes(orm)) orms.push(orm);
       }
+    }
+    // Remove raw-http fallback if real frameworks were found from workspaces
+    if (frameworks.length > 1 && frameworks.includes("raw-http")) {
+      frameworks = frameworks.filter((fw) => fw !== "raw-http");
     }
   }
 
@@ -387,7 +406,7 @@ async function getWorkspacePatterns(
     const patterns: string[] = [];
     for (const line of yaml.split("\n")) {
       const match = line.match(/^\s*-\s*['"]?([^'"]+)['"]?\s*$/);
-      if (match) patterns.push(match[1]);
+      if (match) patterns.push(match[1].trim());
     }
     if (patterns.length > 0) return patterns;
   } catch {}
