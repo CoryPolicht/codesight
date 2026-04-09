@@ -220,6 +220,23 @@ export async function detectProject(root: string): Promise<ProjectInfo> {
         // detectWorkspace handles both JS (package.json) and non-JS manifests
         const wsInfo = await detectWorkspace(root, wsPath, d.name);
         if (wsInfo) workspaces.push(wsInfo);
+        // Depth-2 discovery — always runs, not as fallback. Catches nested
+        // workspaces in container dirs (e.g. `repos/Engine/`, `apps/web/`,
+        // `services/api/`) even when the container itself matched (e.g. via
+        // PR #15 Python subdir scan hijacking the slot).
+        try {
+          const nestedDirs = await readdir(wsPath, { withFileTypes: true });
+          for (const n of nestedDirs) {
+            if (!n.isDirectory() || n.name.startsWith(".") || IGNORE_DIRS.has(n.name)) continue;
+            const nestedPath = join(wsPath, n.name);
+            const nestedInfo = await detectWorkspace(root, nestedPath, n.name);
+            if (nestedInfo) {
+              // De-dupe by relative path
+              const dup = workspaces.find((w) => w.path === nestedInfo.path);
+              if (!dup) workspaces.push(nestedInfo);
+            }
+          }
+        } catch {}
       }
     } catch {}
     // Treat as implicit monorepo when multiple distinct stacks are found
@@ -763,6 +780,67 @@ async function detectNonJSWorkspace(
       orms.push("django");
     }
   } catch {}
+
+  // Elixir / Phoenix / Ecto (workspace-level; mirrors existing root-level detection)
+  const mixExsPath = join(wsPath, "mix.exs");
+  if (await fileExists(mixExsPath)) {
+    try {
+      const mix = await readFile(mixExsPath, "utf-8");
+      if (mix.includes(":phoenix") || mix.includes("phoenix,")) frameworks.push("phoenix");
+      if (mix.includes(":ecto") || mix.includes("ecto_sql") || mix.includes("ecto,")) orms.push("ecto");
+    } catch {}
+  }
+
+  // Rust web frameworks (workspace-level; mirrors existing root-level detection)
+  const cargoTomlPath = join(wsPath, "Cargo.toml");
+  if (await fileExists(cargoTomlPath)) {
+    try {
+      const cargo = await readFile(cargoTomlPath, "utf-8");
+      if (cargo.includes("actix-web")) frameworks.push("actix");
+      else if (cargo.includes("axum")) frameworks.push("axum");
+    } catch {}
+  }
+
+  // Go web frameworks (workspace-level)
+  const goModPath = join(wsPath, "go.mod");
+  if (await fileExists(goModPath)) {
+    try {
+      const goMod = await readFile(goModPath, "utf-8");
+      if (goMod.includes("gin-gonic/gin")) frameworks.push("gin");
+      else if (goMod.includes("gofiber/fiber")) frameworks.push("fiber");
+      else if (goMod.includes("labstack/echo")) frameworks.push("echo");
+      else if (goMod.includes("go-chi/chi")) frameworks.push("chi");
+      else frameworks.push("go-net-http");
+    } catch {}
+  }
+
+  // Spring Boot / Ktor (Java/Kotlin) (workspace-level)
+  const pomXmlPath = join(wsPath, "pom.xml");
+  const buildGradlePath = join(wsPath, "build.gradle");
+  const buildGradleKtsPath = join(wsPath, "build.gradle.kts");
+  const hasPom = await fileExists(pomXmlPath);
+  const hasGradleKts = await fileExists(buildGradleKtsPath);
+  const hasGradle = hasGradleKts || await fileExists(buildGradlePath);
+  if (hasPom || hasGradle) {
+    try {
+      const buildFile = hasPom
+        ? await readFile(pomXmlPath, "utf-8")
+        : await readFile(hasGradleKts ? buildGradleKtsPath : buildGradlePath, "utf-8");
+      if (buildFile.includes("spring")) frameworks.push("spring");
+      if (buildFile.includes("ktor")) frameworks.push("ktor");
+      if (buildFile.includes("exposed")) orms.push("exposed");
+    } catch {}
+  }
+
+  // Rails (Ruby) (workspace-level)
+  const gemfilePath = join(wsPath, "Gemfile");
+  if (await fileExists(gemfilePath)) {
+    try {
+      const gemfile = await readFile(gemfilePath, "utf-8");
+      if (gemfile.includes("rails")) frameworks.push("rails");
+      if (gemfile.includes("activerecord") || gemfile.includes("rails")) orms.push("activerecord");
+    } catch {}
+  }
 
   if (frameworks.length === 0) return null;
 
