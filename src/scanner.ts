@@ -934,51 +934,65 @@ async function getPythonDeps(root: string): Promise<string[]> {
     } catch {}
     try {
       const toml = await readFile(join(dir, "pyproject.toml"), "utf-8");
-      // PEP 621: [project] dependencies = [...]
-      // Use bracket counting to handle packages with extras like django[bcrypt]
-      const projectIdx = toml.indexOf("[project]");
-      if (projectIdx >= 0) {
-        const afterProject = toml.slice(projectIdx);
-        const depMatch = afterProject.match(/\bdependencies\s*=\s*\[/);
-        if (depMatch) {
-          const arrStart = projectIdx + (depMatch.index ?? 0) + depMatch[0].length - 1;
-          let depth = 1;
-          let pos = arrStart + 1;
-          let inStr = false;
-          while (pos < toml.length && depth > 0) {
-            const ch = toml[pos];
-            if (ch === '"' && toml[pos - 1] !== "\\") inStr = !inStr;
-            if (!inStr) {
-              if (ch === "[") depth++;
-              else if (ch === "]") depth--;
-            }
-            pos++;
-          }
-          const depsContent = toml.slice(arrStart + 1, pos - 1);
-          for (const m of depsContent.matchAll(/"([^"]+)"/g)) {
-            const name = m[1].split(/[>=<\[!~;]/)[0].trim().toLowerCase();
-            if (name && !deps.includes(name)) deps.push(name);
-          }
-        }
-      }
-      // Poetry: [tool.poetry.dependencies] — key = "version" pairs
-      const poetryIdx = toml.indexOf("[tool.poetry.dependencies]");
-      if (poetryIdx >= 0) {
-        const afterPoetry = toml.slice(poetryIdx + "[tool.poetry.dependencies]".length);
-        for (const line of afterPoetry.split("\n")) {
-          const trimmed = line.trim();
-          if (trimmed.startsWith("[")) break; // next section
-          if (!trimmed || trimmed.startsWith("#")) continue;
-          const eqIdx = trimmed.indexOf("=");
-          if (eqIdx > 0) {
-            const name = trimmed.slice(0, eqIdx).trim().toLowerCase().replace(/_/g, "-");
-            if (name && name !== "python") deps.push(name);
-          }
-        }
-      }
+      parsePyprojectProjectDeps(toml, deps);
+      parsePyprojectPoetryDeps(toml, deps);
     } catch {}
   }
   return deps;
+}
+
+/** PEP 621: [project] dependencies = [...] */
+function parsePyprojectProjectDeps(toml: string, deps: string[]): void {
+  const projectIdx = toml.indexOf("[project]");
+  if (projectIdx < 0) return;
+
+  const afterProject = toml.slice(projectIdx);
+  const depMatch = afterProject.match(/\bdependencies\s*=\s*\[/);
+  if (!depMatch) return;
+
+  // Bracket counting to handle packages with extras like django[bcrypt]
+  const arrStart = projectIdx + (depMatch.index ?? 0) + depMatch[0].length - 1;
+  let depth = 1;
+  let pos = arrStart + 1;
+  let inStr = false;
+  while (pos < toml.length && depth > 0) {
+    const ch = toml[pos];
+    if (ch === '"' && toml[pos - 1] !== "\\") inStr = !inStr;
+    if (!inStr) {
+      if (ch === "[") depth++;
+      else if (ch === "]") depth--;
+    }
+    pos++;
+  }
+  const depsContent = toml.slice(arrStart + 1, pos - 1);
+  for (const m of depsContent.matchAll(/"([^"]+)"/g)) {
+    addPythonDep(m[1].split(/[>=<\[!~;]/)[0], deps);
+  }
+}
+
+/** Poetry: [tool.poetry.dependencies] — key = "version" pairs */
+function parsePyprojectPoetryDeps(toml: string, deps: string[]): void {
+  const sectionMatch = toml.match(/^\[tool\.poetry\.dependencies\]\s*$/m);
+  if (!sectionMatch) return;
+
+  const sectionStart = (sectionMatch.index ?? 0) + sectionMatch[0].length;
+  const sectionBody = toml.slice(sectionStart);
+  for (const line of sectionBody.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    if (trimmed.startsWith("[")) break;
+
+    const eqIdx = trimmed.indexOf("=");
+    if (eqIdx < 0) continue;
+    const rawName = trimmed.slice(0, eqIdx).trim().replace(/^['"]|['"]$/g, "");
+    addPythonDep(rawName, deps);
+  }
+}
+
+function addPythonDep(rawName: string, deps: string[]): void {
+  const name = rawName.trim().toLowerCase().replace(/_/g, "-");
+  if (!name || name === "python" || name.startsWith("#") || deps.includes(name)) return;
+  deps.push(name);
 }
 
 async function getGoDeps(root: string): Promise<string[]> {
