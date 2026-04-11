@@ -2,7 +2,7 @@
 
 import { resolve, join } from "node:path";
 import { writeFile, stat, mkdir } from "node:fs/promises";
-import { collectFiles, detectProject } from "./scanner.js";
+import { collectFiles, detectProject, readCodesightIgnore } from "./scanner.js";
 import { detectRoutes } from "./detectors/routes.js";
 import { detectSchemas } from "./detectors/schema.js";
 import { detectComponents } from "./detectors/components.js";
@@ -12,7 +12,12 @@ import { detectMiddleware } from "./detectors/middleware.js";
 import { detectDependencyGraph } from "./detectors/graph.js";
 import { enrichRouteContracts } from "./detectors/contracts.js";
 import { calculateTokenStats } from "./detectors/tokens.js";
-import { writeOutput } from "./formatter.js";
+import { detectGraphQLRoutes, detectGRPCRoutes, detectWebSocketRoutes } from "./detectors/graphql.js";
+import { detectEvents } from "./detectors/events.js";
+import { detectTestCoverage } from "./detectors/coverage.js";
+import { detectOpenAPISpec } from "./detectors/openapi.js";
+import { writeOutput, computeCrudGroups, writeKnowledgeOutput } from "./formatter.js";
+import { detectKnowledge } from "./detectors/knowledge.js";
 import { generateAIConfigs } from "./generators/ai-config.js";
 import { generateHtmlReport } from "./generators/html-report.js";
 import { generateWiki } from "./generators/wiki.js";
@@ -20,7 +25,7 @@ import type { ScanResult } from "./types.js";
 import type { CodesightConfig } from "./types.js";
 import { loadConfig, mergeCliConfig } from "./config.js";
 
-const VERSION = "1.6.3";
+const VERSION = "1.10.0";
 const BRAND = "codesight";
 
 function printHelp() {
@@ -30,39 +35,48 @@ function printHelp() {
   Usage: ${BRAND} [options] [directory]
 
   Options:
-    -o, --output <dir>   Output directory (default: .codesight)
-    -d, --depth <n>      Max directory depth (default: 10)
-    --wiki               Generate wiki knowledge base (.codesight/wiki/)
-    --init               Generate AI config files (CLAUDE.md, .cursorrules, etc.)
-    --watch              Re-scan on file changes
-    --hook               Install git pre-commit hook
-    --html               Generate interactive HTML report
-    --open               Generate HTML report and open in browser
-    --mcp                Start as MCP server (for Claude Code, Cursor)
-    --json               Output JSON instead of markdown
-    --benchmark          Show detailed token savings breakdown
-    --profile <tool>     Generate optimized config (claude-code|cursor|codex|copilot|windsurf)
-    --blast <file>       Show blast radius for a file
-    --telemetry          Run token telemetry (real before/after measurement)
-    --eval               Run precision/recall benchmarks on eval fixtures
-    -v, --version        Show version
-    -h, --help           Show this help
+    -o, --output <dir>       Output directory (default: .codesight)
+    -d, --depth <n>          Max directory depth (default: 10)
+    --wiki                   Generate wiki knowledge base (.codesight/wiki/)
+    --init                   Generate AI config files (CLAUDE.md, .cursorrules, etc.)
+    --watch                  Re-scan on file changes
+    --hook                   Install git pre-commit hook
+    --html                   Generate interactive HTML report
+    --open                   Generate HTML report and open in browser
+    --mcp                    Start as MCP server (for Claude Code, Cursor)
+    --json                   Output JSON instead of markdown
+    --benchmark              Show detailed token savings breakdown
+    --profile <tool>         Generate optimized config (claude-code|cursor|codex|copilot|windsurf)
+    --blast <file>           Show blast radius for a file
+    --telemetry              Run token telemetry (real before/after measurement)
+    --eval                   Run precision/recall benchmarks on eval fixtures
+    --max-tokens <n>         Trim output to fit token budget (e.g. --max-tokens 50000)
+    --since <ref>            Show only routes from files changed since git ref/commit
+    --mode <mode>            Scan mode: code (default) | knowledge (map .md notes)
+    -v, --version            Show version
+    -h, --help               Show this help
 
-  Config:
+  Config (.codesightignore / codesight.config.json):
     Reads codesight.config.(ts|js|json) or package.json "codesight" field.
-    See docs for disableDetectors, customRoutePatterns, plugins, and more.
+    .codesightignore: gitignore-style patterns for files/dirs to skip.
+    Detectors: graphql, grpc, websocket, events auto-detected when present.
+    See docs for disableDetectors, customRoutePatterns, plugins, maxTokens, and more.
 
   Examples:
-    npx ${BRAND}                    # Scan current directory
-    npx ${BRAND} --wiki             # Scan + generate wiki knowledge base
-    npx ${BRAND} --init             # Scan + generate AI config files
-    npx ${BRAND} --open             # Scan + open visual report
-    npx ${BRAND} --watch            # Watch mode, re-scan on changes
-    npx ${BRAND} --mcp              # Start MCP server
-    npx ${BRAND} --hook             # Install git pre-commit hook
-    npx ${BRAND} --telemetry        # Measure real token savings
-    npx ${BRAND} --eval             # Run accuracy benchmarks
-    npx ${BRAND} ./my-project       # Scan specific directory
+    npx ${BRAND}                         # Scan current directory
+    npx ${BRAND} --wiki                  # Scan + generate wiki knowledge base
+    npx ${BRAND} --init                  # Scan + generate AI config files
+    npx ${BRAND} --open                  # Scan + open visual report
+    npx ${BRAND} --watch                 # Watch mode, re-scan on changes
+    npx ${BRAND} --mcp                   # Start MCP server
+    npx ${BRAND} --hook                  # Install git pre-commit hook
+    npx ${BRAND} --max-tokens 50000      # Fit output in 50K token budget
+    npx ${BRAND} --since HEAD~5          # Show routes from last 5 commits
+    npx ${BRAND} --telemetry             # Measure real token savings
+    npx ${BRAND} --eval                  # Run accuracy benchmarks
+    npx ${BRAND} ./my-project            # Scan specific directory
+    npx ${BRAND} --mode knowledge        # Map knowledge base (.md notes → KNOWLEDGE.md)
+    npx ${BRAND} --mode knowledge ~/vault # Map Obsidian vault or any .md folder
 `);
 }
 
@@ -94,9 +108,11 @@ async function scan(root: string, outputDirName: string, maxDepth: number, userC
     console.log(`  Monorepo: ${project.workspaces.map((w) => w.name).join(", ")}`);
   }
 
-  // Step 2: Collect files
+  // Step 2: Collect files — merge .codesightignore + config ignorePatterns
   process.stdout.write("  Collecting files...");
-  const files = await collectFiles(root, maxDepth);
+  const ignoreFromFile = await readCodesightIgnore(root);
+  const allIgnorePatterns = [...(userConfig.ignorePatterns ?? []), ...ignoreFromFile];
+  const files = await collectFiles(root, maxDepth, allIgnorePatterns);
   console.log(` ${files.length} files`);
 
   // Step 3: Run all detectors in parallel (respecting disableDetectors config)
@@ -104,16 +120,36 @@ async function scan(root: string, outputDirName: string, maxDepth: number, userC
 
   const disabled = new Set(userConfig.disableDetectors || []);
 
-  const [rawRoutes, schemas, components, libs, configResult, middleware, graph] =
+  const [rawHttpRoutes, schemas, components, libs, configResult, middleware, graph,
+         graphqlRoutes, grpcRoutes, wsRoutes, events, openapi] =
     await Promise.all([
-      disabled.has("routes") ? Promise.resolve([]) : detectRoutes(files, project),
+      disabled.has("routes") ? Promise.resolve([]) : detectRoutes(files, project, userConfig),
       disabled.has("schema") ? Promise.resolve([]) : detectSchemas(files, project),
       disabled.has("components") ? Promise.resolve([]) : detectComponents(files, project),
       disabled.has("libs") ? Promise.resolve([]) : detectLibs(files, project),
       disabled.has("config") ? Promise.resolve({ envVars: [], configFiles: [], dependencies: {}, devDependencies: {} }) : detectConfig(files, project),
       disabled.has("middleware") ? Promise.resolve([]) : detectMiddleware(files, project),
       disabled.has("graph") ? Promise.resolve({ edges: [], hotFiles: [] }) : detectDependencyGraph(files, project),
+      disabled.has("graphql") ? Promise.resolve([]) : detectGraphQLRoutes(files, project),
+      disabled.has("graphql") ? Promise.resolve([]) : detectGRPCRoutes(files, project),
+      disabled.has("graphql") ? Promise.resolve([]) : detectWebSocketRoutes(files, project),
+      disabled.has("events") ? Promise.resolve([]) : detectEvents(files, project),
+      detectOpenAPISpec(root, project),
     ]);
+
+  // Merge OpenAPI routes and schemas if spec found
+  const rawRoutes = [...rawHttpRoutes, ...graphqlRoutes, ...grpcRoutes, ...wsRoutes];
+  if (openapi.routes.length > 0) {
+    // Only use OpenAPI routes if we got very few from code detection
+    if (rawRoutes.length === 0) {
+      rawRoutes.push(...openapi.routes);
+    }
+    // Add any OpenAPI schemas not already detected
+    const existingModelNames = new Set(schemas.map((m) => m.name.toLowerCase()));
+    for (const m of openapi.schemas) {
+      if (!existingModelNames.has(m.name.toLowerCase())) schemas.push(m);
+    }
+  }
 
   // Step 3b: Run plugin detectors
   if (userConfig.plugins) {
@@ -135,13 +171,32 @@ async function scan(root: string, outputDirName: string, maxDepth: number, userC
   // Step 4: Enrich routes with contract info
   const routes = await enrichRouteContracts(rawRoutes, project);
 
+  // Step 4b: Test coverage detection
+  const testCoverage = await detectTestCoverage(files, routes, schemas, root);
+
+  // Step 4c: Compute CRUD groups
+  const crudGroups = computeCrudGroups(routes);
+
   // Report AST vs regex detection
   const astRoutes = routes.filter((r) => r.confidence === "ast").length;
   const astSchemas = schemas.filter((s) => s.confidence === "ast").length;
   const astComponents = components.filter((c) => c.confidence === "ast").length;
   const totalAST = astRoutes + astSchemas + astComponents;
+
+  const specialCounts: string[] = [];
+  const gqlCount = routes.filter((r) => ["QUERY", "MUTATION", "SUBSCRIPTION"].includes(r.method)).length;
+  const grpcCount = routes.filter((r) => r.method === "RPC").length;
+  const wsCount = routes.filter((r) => r.method === "WS" || r.method === "WS-ROOM").length;
+  if (gqlCount > 0) specialCounts.push(`${gqlCount} graphql`);
+  if (grpcCount > 0) specialCounts.push(`${grpcCount} rpc`);
+  if (wsCount > 0) specialCounts.push(`${wsCount} ws`);
+  if (events.length > 0) specialCounts.push(`${events.length} events`);
+
+  const specialStr = specialCounts.length > 0 ? `, ${specialCounts.join(", ")}` : "";
   if (totalAST > 0) {
-    console.log(` done (AST: ${astRoutes} routes, ${astSchemas} models, ${astComponents} components)`);
+    console.log(` done (AST: ${astRoutes} routes, ${astSchemas} models, ${astComponents} components${specialStr})`);
+  } else if (specialCounts.length > 0) {
+    console.log(` done (${specialCounts.join(", ")})`);
   } else {
     console.log(" done");
   }
@@ -160,6 +215,9 @@ async function scan(root: string, outputDirName: string, maxDepth: number, userC
     middleware,
     graph,
     tokenStats: { outputTokens: 0, estimatedExplorationTokens: 0, saved: 0, fileCount: files.length },
+    events: events.length > 0 ? events : undefined,
+    testCoverage: testCoverage.testFiles.length > 0 ? testCoverage : undefined,
+    crudGroups: crudGroups.length > 0 ? crudGroups : undefined,
   };
 
   const outputContent = await writeOutput(tempResult, outputDir);
@@ -215,7 +273,8 @@ async function installGitHook(root: string, outputDirName: string) {
     existingContent = await readFile(hookPath, "utf-8");
   } catch {}
 
-  const hookCommand = `\n# codesight: regenerate AI context\nnpx codesight --wiki -o ${outputDirName}\ngit add ${outputDirName}/\n`;
+  const safeOutputDir = outputDirName.replace(/[^a-zA-Z0-9._-]/g, "");
+  const hookCommand = `\n# codesight: regenerate AI context\nnpx codesight --wiki -o ${safeOutputDir}\ngit add ${safeOutputDir}/\n`;
 
   if (existingContent.includes("codesight")) {
     console.log("  Git hook already installed.");
@@ -306,6 +365,53 @@ async function watchMode(root: string, outputDirName: string, maxDepth: number, 
   await new Promise(() => {});
 }
 
+async function runKnowledgeScan(root: string, outputDirName: string, maxDepth: number) {
+  const outputDir = join(root, outputDirName);
+  const projectName = root.split("/").pop() || "Project";
+
+  console.log(`\n  ${BRAND} v${VERSION}`);
+  console.log(`  Knowledge scan: ${root}\n`);
+
+  const startTime = Date.now();
+
+  process.stdout.write("  Collecting notes...");
+  const files = await collectFiles(root, maxDepth, []);
+  const mdFiles = files.filter((f) => f.endsWith(".md") || f.endsWith(".mdx"));
+  console.log(` ${mdFiles.length} markdown files`);
+
+  process.stdout.write("  Analyzing...");
+  const map = await detectKnowledge(files, root);
+  console.log(` done (${map.totalNotes} notes, ${map.decisions.length} decisions, ${map.openQuestions.length} questions)`);
+
+  process.stdout.write("  Writing output...");
+  await writeKnowledgeOutput(map, outputDir, projectName, VERSION);
+  console.log(` ${outputDirName}/KNOWLEDGE.md`);
+
+  const elapsed = Date.now() - startTime;
+
+  // Note type breakdown
+  const typeCounts = new Map<string, number>();
+  for (const note of map.notes) {
+    typeCounts.set(note.type, (typeCounts.get(note.type) || 0) + 1);
+  }
+  const breakdown = [...typeCounts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([t, n]) => `${t}: ${n}`)
+    .join(", ");
+
+  console.log(`
+  Results:
+    Notes:        ${map.totalNotes}
+    Decisions:    ${map.decisions.length}
+    Questions:    ${map.openQuestions.length}
+    Themes:       ${map.recurringThemes.length}
+    People:       ${map.people.length}
+    ${breakdown ? `Breakdown:    ${breakdown}` : ""}
+
+  Done in ${elapsed}ms
+`);
+}
+
 async function main() {
   const args = process.argv.slice(2);
 
@@ -336,6 +442,9 @@ async function main() {
   let doBlast = "";
   let doTelemetry = false;
   let doEval = false;
+  let maxTokens = 0;
+  let doSince = "";
+  let mode = "code";
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -370,6 +479,12 @@ async function main() {
       doTelemetry = true;
     } else if (arg === "--eval") {
       doEval = true;
+    } else if (arg === "--max-tokens" && args[i + 1]) {
+      maxTokens = parseInt(args[++i], 10);
+    } else if (arg === "--since" && args[i + 1]) {
+      doSince = args[++i];
+    } else if (arg === "--mode" && args[i + 1]) {
+      mode = args[++i];
     } else if (!arg.startsWith("-")) {
       targetDir = resolve(arg);
     }
@@ -397,19 +512,56 @@ async function main() {
     maxDepth: maxDepth !== 10 ? maxDepth : undefined,
     outputDir: outputDirName !== ".codesight" ? outputDirName : undefined,
     profile: doProfile || undefined,
+    maxTokens: maxTokens > 0 ? maxTokens : undefined,
   });
 
   // Apply config overrides
   if (config.maxDepth) maxDepth = config.maxDepth;
   if (config.outputDir) outputDirName = config.outputDir;
 
+  // --since: get list of files changed since a git ref
+  let sinceFiles: Set<string> | null = null;
+  if (doSince) {
+    try {
+      const { execFileSync } = await import("node:child_process");
+      const changed = execFileSync("git", ["diff", "--name-only", doSince], { cwd: root }).toString().trim();
+      if (changed) {
+        sinceFiles = new Set(changed.split("\n").map((f) => f.trim()));
+        console.log(`  --since ${doSince}: ${sinceFiles.size} changed files`);
+      }
+    } catch {
+      console.warn(`  Warning: --since failed (not a git repo or invalid ref)`);
+    }
+  }
+
   // Install git hook
   if (doHook) {
     await installGitHook(root, outputDirName);
   }
 
+  // Knowledge mode: scan .md files instead of code
+  if (mode === "knowledge") {
+    await runKnowledgeScan(root, outputDirName, maxDepth);
+    return;
+  }
+
   // Run scan (passes config for disabled detectors + plugins)
   let result = await scan(root, outputDirName, maxDepth, config);
+
+  // --since: filter result to only show changed files' routes/models
+  if (sinceFiles && sinceFiles.size > 0) {
+    result = {
+      ...result,
+      routes: result.routes.filter((r) => sinceFiles!.has(r.file)),
+      schemas: result.schemas, // schemas are hard to diff by file, keep all
+    };
+    console.log(`  --since filter: showing ${result.routes.length} routes from changed files`);
+  }
+
+  // --max-tokens: trim output to fit token budget
+  if (config.maxTokens && config.maxTokens > 0) {
+    result = applyTokenBudget(result, config.maxTokens);
+  }
 
   // Run plugin post-processors
   if (config.plugins) {
@@ -567,6 +719,61 @@ async function main() {
   if (doWatch) {
     await watchMode(root, outputDirName, maxDepth, config, doWiki);
   }
+}
+
+/**
+ * Trim ScanResult to fit within a token budget.
+ * Priority order (highest to lowest):
+ *   1. Routes tagged with [auth, payment, ai] — keep
+ *   2. Schema models with most fields — keep
+ *   3. Remaining routes by tag count (more tags = more important)
+ *   4. Components, libs — trim from the tail
+ */
+function applyTokenBudget(result: ScanResult, maxTokens: number): ScanResult {
+  // Rough estimate: each route line ~15 tokens, model ~8+fields*5, component ~10
+  const routeWeight = (r: ScanResult["routes"][0]) => {
+    const priority = ["auth", "payment", "ai", "queue"].filter((t) => r.tags.includes(t)).length;
+    return priority * 100 + r.tags.length * 10;
+  };
+
+  let estimatedTokens =
+    result.routes.length * 15 +
+    result.schemas.reduce((s, m) => s + 8 + m.fields.length * 5, 0) +
+    result.components.length * 10 +
+    result.libs.length * 8;
+
+  if (estimatedTokens <= maxTokens) return result; // already fits
+
+  // Sort routes by importance, trim from the tail
+  const sortedRoutes = [...result.routes].sort((a, b) => routeWeight(b) - routeWeight(a));
+  let trimmedRoutes = sortedRoutes;
+  let trimmedComponents = result.components;
+  let trimmedLibs = result.libs;
+
+  while (estimatedTokens > maxTokens && trimmedLibs.length > 0) {
+    trimmedLibs = trimmedLibs.slice(0, Math.floor(trimmedLibs.length * 0.7));
+    estimatedTokens = trimmedRoutes.length * 15 +
+      result.schemas.reduce((s, m) => s + 8 + m.fields.length * 5, 0) +
+      trimmedComponents.length * 10 + trimmedLibs.length * 8;
+  }
+
+  while (estimatedTokens > maxTokens && trimmedComponents.length > 0) {
+    trimmedComponents = trimmedComponents.slice(0, Math.floor(trimmedComponents.length * 0.7));
+    estimatedTokens = trimmedRoutes.length * 15 +
+      result.schemas.reduce((s, m) => s + 8 + m.fields.length * 5, 0) +
+      trimmedComponents.length * 10 + trimmedLibs.length * 8;
+  }
+
+  while (estimatedTokens > maxTokens && trimmedRoutes.length > 10) {
+    trimmedRoutes = trimmedRoutes.slice(0, Math.floor(trimmedRoutes.length * 0.8));
+    estimatedTokens = trimmedRoutes.length * 15 +
+      result.schemas.reduce((s, m) => s + 8 + m.fields.length * 5, 0) +
+      trimmedComponents.length * 10 + trimmedLibs.length * 8;
+  }
+
+  console.log(`  Token budget: trimmed to ~${estimatedTokens} tokens (limit: ${maxTokens})`);
+
+  return { ...result, routes: trimmedRoutes, components: trimmedComponents, libs: trimmedLibs };
 }
 
 main().catch((err) => {

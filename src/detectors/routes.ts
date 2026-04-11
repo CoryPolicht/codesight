@@ -4,14 +4,18 @@ import { loadTypeScript } from "../ast/loader.js";
 import { extractRoutesAST } from "../ast/extract-routes.js";
 import { extractPythonRoutesAST } from "../ast/extract-python.js";
 import { extractGoRoutesStructured } from "../ast/extract-go.js";
-import { extractCSharpRoutes } from "../ast/extract-csharp.js";
-import type { RouteInfo, Framework, ProjectInfo } from "../types.js";
+import { extractLaravelRoutes } from "../ast/extract-php.js";
+import { extractAspNetControllerRoutes, extractAspNetMinimalApiRoutes } from "../ast/extract-csharp.js";
+import { extractFlutterRoutes } from "../ast/extract-dart.js";
+import { extractVaporRoutes } from "../ast/extract-swift.js";
+import { extractRetrofitRoutes, extractNavigationRoutes, extractActivitiesFromManifest } from "../ast/extract-android.js";
+import type { RouteInfo, Framework, ProjectInfo, CodesightConfig } from "../types.js";
 
 const HTTP_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"];
 
 const TAG_PATTERNS: [string, RegExp[]][] = [
-  ["auth", [/auth/i, /jwt/i, /token/i, /session/i, /bearer/i, /passport/i, /clerk/i, /betterAuth/i, /better-auth/i, /\[Authorize\]/i, /IAuthorizationService/i]],
-  ["db", [/prisma/i, /drizzle/i, /typeorm/i, /sequelize/i, /mongoose/i, /knex/i, /sql/i, /\.query\(/i, /\.execute\(/i, /\.findMany\(/i, /\.findFirst\(/i, /\.insert\(/i, /\.update\(/i, /\.delete\(/i, /_context\./i, /DbContext/i, /\.SaveChangesAsync/i]],
+  ["auth", [/auth/i, /jwt/i, /token/i, /session/i, /bearer/i, /passport/i, /clerk/i, /betterAuth/i, /better-auth/i]],
+  ["db", [/prisma/i, /drizzle/i, /typeorm/i, /sequelize/i, /mongoose/i, /knex/i, /sql/i, /\.query\(/i, /\.execute\(/i, /\.findMany\(/i, /\.findFirst\(/i, /\.insert\(/i, /\.update\(/i, /\.delete\(/i]],
   ["cache", [/redis/i, /cache/i, /memcache/i, /\.setex\(/i, /\.getex\(/i]],
   ["queue", [/bullmq/i, /bull\b/i, /\.add\(\s*['"`]/i, /queue/i]],
   ["email", [/resend/i, /sendgrid/i, /nodemailer/i, /\.send\(\s*\{[\s\S]*?to:/i]],
@@ -32,7 +36,8 @@ function detectTags(content: string): string[] {
 
 export async function detectRoutes(
   files: string[],
-  project: ProjectInfo
+  project: ProjectInfo,
+  config?: CodesightConfig
 ): Promise<RouteInfo[]> {
   const routes: RouteInfo[] = [];
 
@@ -102,6 +107,9 @@ export async function detectRoutes(
       case "spring":
         routes.push(...(await detectSpringRoutes(files, project)));
         break;
+      case "ktor":
+        routes.push(...(await detectKtorRoutes(files, project)));
+        break;
       case "actix":
       case "axum":
         routes.push(...(await detectRustRoutes(files, project, fw)));
@@ -112,11 +120,20 @@ export async function detectRoutes(
       case "php":
         routes.push(...(await detectPHPRoutes(files, project)));
         break;
-      case "aspnet-minimal":
-        routes.push(...(await detectAspNetMinimalRoutes(files, project)));
+      case "laravel":
+        routes.push(...(await detectLaravelRoutes(files, project)));
         break;
-      case "aspnet-webapi":
-        routes.push(...(await detectAspNetWebApiRoutes(files, project)));
+      case "aspnet":
+        routes.push(...(await detectAspNetRoutes(files, project)));
+        break;
+      case "flutter":
+        routes.push(...(await detectFlutterGoRoutes(files, project)));
+        break;
+      case "vapor":
+        routes.push(...(await detectVaporRoutes(files, project)));
+        break;
+      case "android":
+        routes.push(...(await detectAndroidRoutes(files, project)));
         break;
     }
   }
@@ -137,6 +154,41 @@ export async function detectRoutes(
     }
   }
 
+  // Apply customRoutePatterns from config
+  if (config?.customRoutePatterns?.length) {
+    for (const file of files) {
+      const content = await readFileSafe(file);
+      if (!content) continue;
+      const rel = relative(process.cwd(), file);
+
+      for (const { pattern, method = "ALL" } of config.customRoutePatterns) {
+        let re: RegExp;
+        try {
+          re = new RegExp(pattern, "g");
+        } catch {
+          continue;
+        }
+
+        for (const match of content.matchAll(re)) {
+          // Try to extract a path from the first capture group, fallback to file path
+          const extractedPath = match[1] ?? `/${rel}`;
+          const routeKey = `${method}:${extractedPath}`;
+          if (!seen.has(routeKey)) {
+            seen.add(routeKey);
+            deduped.push({
+              method,
+              path: extractedPath,
+              file: rel,
+              tags: detectTags(content),
+              framework: project.frameworks[0] ?? "raw-http",
+              confidence: "regex",
+            });
+          }
+        }
+      }
+    }
+  }
+
   return deduped;
 }
 
@@ -153,8 +205,11 @@ async function detectNextAppRoutes(
   for (const file of routeFiles) {
     const content = await readFileSafe(file);
     const rel = relative(project.root, file).replace(/\\/g, "/");
-    const pathMatch = rel.match(/(?:src\/)?app(.*)\/route\./);
-    const apiPath = pathMatch ? pathMatch[1] || "/" : "/";
+    // Match /app/ or /src/app/ as a directory boundary (not inside "apps/...")
+    const pathMatch = rel.match(/(?:^|\/)(?:src\/)?app(?=\/)(\/.*?)\/route\./);
+    let apiPath = pathMatch ? pathMatch[1] || "/" : "/";
+    // Remove Next.js route groups like (marketing), (auth), etc.
+    apiPath = apiPath.replace(/\/\([^)]+\)/g, "") || "/";
 
     for (const method of HTTP_METHODS) {
       const pattern = new RegExp(
@@ -954,7 +1009,14 @@ async function detectPhoenixRoutes(
   files: string[],
   project: ProjectInfo
 ): Promise<RouteInfo[]> {
-  const routeFiles = files.filter((f) => f.match(/router\.ex$/));
+  // Match `router.ex`, files ending in `_routes.ex` (common split pattern),
+  // and any `.ex` file inside a directory named `router/` (Phoenix submodules
+  // used via `use MyAppWeb.Router.SomeRoutes` macros).
+  const routeFiles = files.filter((f) =>
+    f.match(/router\.ex$/) ||
+    f.match(/_routes\.ex$/) ||
+    f.match(/\/router\/[^/]+\.ex$/)
+  );
   const routes: RouteInfo[] = [];
 
   for (const file of routeFiles) {
@@ -1045,6 +1107,82 @@ async function detectSpringRoutes(
   return routes;
 }
 
+// --- Ktor (Kotlin) ---
+async function detectKtorRoutes(
+  files: string[],
+  project: ProjectInfo
+): Promise<RouteInfo[]> {
+  const ktFiles = files.filter((f) => f.endsWith(".kt"));
+  const routes: RouteInfo[] = [];
+
+  for (const file of ktFiles) {
+    const content = await readFileSafe(file);
+    if (
+      !content.includes("routing") &&
+      !content.includes("route(") &&
+      !content.includes("get(") &&
+      !content.includes("post(")
+    ) continue;
+
+    const rel = relative(project.root, file);
+
+    // Track route() prefix nesting: route("/prefix") { get("/sub") { ... } }
+    // Strategy: find all route() prefixes, then find method calls inside each block
+    const prefixes = new Map<number, string>(); // offset → prefix
+    const routeBlockPat = /\.?route\s*\(\s*"([^"]+)"\s*\)\s*\{/g;
+    let rm: RegExpExecArray | null;
+    while ((rm = routeBlockPat.exec(content)) !== null) {
+      prefixes.set(rm.index + rm[0].length, rm[1]);
+    }
+
+    // Flat method routes: get("/path") { ... } or post("/path") { ... }
+    const methodPat = /\b(get|post|put|patch|delete|head|options)\s*\(\s*"([^"]+)"\s*\)/gi;
+    let mm: RegExpExecArray | null;
+    while ((mm = methodPat.exec(content)) !== null) {
+      const method = mm[1].toUpperCase();
+      const path = mm[2];
+      const offset = mm.index;
+
+      // Find the closest enclosing route() prefix (largest prefix offset < current offset)
+      let prefix = "";
+      for (const [pOffset, pPath] of prefixes) {
+        if (pOffset <= offset) prefix = pPath;
+      }
+
+      routes.push({
+        method,
+        path: prefix ? normalizePath(prefix + "/" + path) : path,
+        file: rel,
+        tags: detectTags(content),
+        framework: "ktor" as const,
+        params: extractKtorParams(path),
+        confidence: "regex",
+      });
+    }
+  }
+
+  // Deduplicate
+  const seen = new Set<string>();
+  return routes.filter((r) => {
+    const key = `${r.method}:${r.path}:${r.file}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function normalizePath(path: string): string {
+  return ("/" + path).replace(/\/+/g, "/").replace(/\/$/, "") || "/";
+}
+
+function extractKtorParams(path: string): string[] {
+  const params: string[] = [];
+  const regex = /\{(\w+)\}/g;
+  let m;
+  while ((m = regex.exec(path)) !== null) params.push(m[1]);
+  return params;
+}
+
 // --- Rust (Actix-web, Axum) ---
 async function detectRustRoutes(
   files: string[],
@@ -1071,8 +1209,9 @@ async function detectRustRoutes(
           framework: "actix",
         });
       }
-      // .route("/path", web::get().to(handler))
-      const routePattern = /\.route\s*\(\s*"([^"]+)"\s*,\s*web::(get|post|put|patch|delete)\s*\(\s*\)/gi;
+      // .route("/path", web::get().to(handler)) or .route("/path", get().to(handler))
+      // Handles both web:: prefix and bare method names; .to(handler) is optional
+      const routePattern = /\.route\s*\(\s*"([^"]+)"\s*,\s*(?:web::)?(get|post|put|patch|delete)\s*\(\s*\)(?:\.to\s*\([^)]*\))?/gi;
       while ((match = routePattern.exec(content)) !== null) {
         routes.push({
           method: match[2].toUpperCase(),
@@ -1083,17 +1222,24 @@ async function detectRustRoutes(
         });
       }
     } else if (fw === "axum") {
-      // .route("/path", get(handler)) or .route("/path", post(handler).get(handler))
-      const routePattern = /\.route\s*\(\s*"([^"]+)"\s*,\s*(get|post|put|patch|delete)\s*\(/gi;
+      // .route("/path", get(h)) or .route("/path", get(h).post(h).delete(h))
+      // Capture path + the rest of the line (method chain may span same line)
+      const routePattern = /\.route\s*\(\s*"([^"]+)"\s*,\s*([^\n]+)/g;
       let match;
       while ((match = routePattern.exec(content)) !== null) {
-        routes.push({
-          method: match[2].toUpperCase(),
-          path: match[1],
-          file: rel,
-          tags: detectTags(content),
-          framework: "axum",
-        });
+        const path = match[1];
+        const chain = match[2];
+        const methodPat = /\b(get|post|put|patch|delete|options|head)\s*\(/gi;
+        let mm: RegExpExecArray | null;
+        while ((mm = methodPat.exec(chain)) !== null) {
+          routes.push({
+            method: mm[1].toUpperCase(),
+            path,
+            file: rel,
+            tags: detectTags(content),
+            framework: "axum",
+          });
+        }
       }
     }
   }
@@ -1156,6 +1302,7 @@ async function detectRawHttpRoutes(
           file: rel,
           tags: fileTags,
           framework: "raw-http",
+          confidence: "regex",
         });
       }
     }
@@ -1211,38 +1358,165 @@ async function detectPHPRoutes(
   });
 }
 
-// --- ASP.NET Core Minimal API ---
-async function detectAspNetMinimalRoutes(
+// ─── Laravel ─────────────────────────────────────────────────────────────────
+
+async function detectLaravelRoutes(
+  files: string[],
+  project: ProjectInfo
+): Promise<RouteInfo[]> {
+  // Laravel routes live in routes/api.php and routes/web.php
+  const routeFiles = files.filter(
+    (f) =>
+      f.endsWith(".php") &&
+      (f.match(/[/\\]routes[/\\]/) || basename(f) === "api.php" || basename(f) === "web.php")
+  );
+  const routes: RouteInfo[] = [];
+
+  for (const file of routeFiles) {
+    const content = await readFileSafe(file);
+    if (!content) continue;
+    const rel = relative(project.root, file).replace(/\\/g, "/");
+    const tags = detectTags(content);
+    routes.push(...extractLaravelRoutes(rel, content, tags));
+  }
+
+  return routes;
+}
+
+// ─── ASP.NET Core ─────────────────────────────────────────────────────────────
+
+async function detectAspNetRoutes(
   files: string[],
   project: ProjectInfo
 ): Promise<RouteInfo[]> {
   const csFiles = files.filter((f) => f.endsWith(".cs"));
-  if (csFiles.length === 0) return [];
+  const routes: RouteInfo[] = [];
 
-  // Build per-file tags then delegate to extractor
-  const allTags = detectTags(
-    (await Promise.all(csFiles.map((f) => readFileSafe(f)))).join("\n")
-  );
+  for (const file of csFiles) {
+    const content = await readFileSafe(file);
+    if (!content) continue;
+    const rel = relative(project.root, file).replace(/\\/g, "/");
+    const tags = detectTags(content);
 
-  return extractCSharpRoutes(csFiles, project.root, "aspnet-minimal", allTags);
+    // Controller-style: [HttpGet], [Route] on class
+    if (
+      content.includes("[HttpGet") ||
+      content.includes("[HttpPost") ||
+      content.includes("[HttpPut") ||
+      content.includes("[HttpPatch") ||
+      content.includes("[HttpDelete") ||
+      content.includes("ControllerBase") ||
+      content.includes("Controller")
+    ) {
+      routes.push(...extractAspNetControllerRoutes(rel, content, tags));
+    }
+
+    // Minimal API: app.MapGet(), app.MapPost(), etc. (typically Program.cs)
+    if (content.includes(".Map")) {
+      routes.push(...extractAspNetMinimalApiRoutes(rel, content, tags));
+    }
+  }
+
+  const seen = new Set<string>();
+  return routes.filter((r) => {
+    const key = `${r.method}:${r.path}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
-// --- ASP.NET Core Web API Controllers ---
-async function detectAspNetWebApiRoutes(
+// ─── Flutter (go_router) ─────────────────────────────────────────────────────
+
+async function detectFlutterGoRoutes(
   files: string[],
   project: ProjectInfo
 ): Promise<RouteInfo[]> {
-  const csFiles = files.filter(
-    (f) => f.endsWith(".cs") && (basename(f).endsWith("Controller.cs") || f.endsWith(".cs"))
-  );
-  if (csFiles.length === 0) return [];
+  const dartFiles = files.filter((f) => f.endsWith(".dart"));
+  const routes: RouteInfo[] = [];
 
-  // Build per-file tags then delegate to extractor
-  const allTags = detectTags(
-    (await Promise.all(csFiles.map((f) => readFileSafe(f)))).join("\n")
-  );
+  for (const file of dartFiles) {
+    const content = await readFileSafe(file);
+    if (!content) continue;
+    if (!content.includes("GoRoute") && !content.includes("go_router")) continue;
+    const rel = relative(project.root, file).replace(/\\/g, "/");
+    routes.push(...extractFlutterRoutes(rel, content, detectTags(content)));
+  }
 
-  return extractCSharpRoutes(csFiles, project.root, "aspnet-webapi", allTags);
+  return routes;
+}
+
+// ─── Vapor (Swift) ────────────────────────────────────────────────────────────
+
+async function detectVaporRoutes(
+  files: string[],
+  project: ProjectInfo
+): Promise<RouteInfo[]> {
+  const swiftFiles = files.filter((f) => f.endsWith(".swift"));
+  const routes: RouteInfo[] = [];
+
+  for (const file of swiftFiles) {
+    const content = await readFileSafe(file);
+    if (!content) continue;
+    const rel = relative(project.root, file).replace(/\\/g, "/");
+    routes.push(...extractVaporRoutes(rel, content, detectTags(content)));
+  }
+
+  return routes;
+}
+
+// ─── Android ──────────────────────────────────────────────────────────────────
+
+async function detectAndroidRoutes(
+  files: string[],
+  project: ProjectInfo
+): Promise<RouteInfo[]> {
+  const { readdir } = await import("node:fs/promises");
+  const { join } = await import("node:path");
+  const routes: RouteInfo[] = [];
+
+  // 1. Retrofit routes from .kt files
+  const ktFiles = files.filter((f) => f.endsWith(".kt"));
+  for (const file of ktFiles) {
+    const content = await readFileSafe(file);
+    if (!content) continue;
+    const rel = relative(project.root, file).replace(/\\/g, "/");
+    routes.push(...extractRetrofitRoutes(rel, content, detectTags(content)));
+  }
+
+  // 2. Navigation XML routes
+  const navDirs = [
+    join(project.root, "app", "src", "main", "res", "navigation"),
+    join(project.root, "src", "main", "res", "navigation"),
+  ];
+  for (const navDir of navDirs) {
+    try {
+      const entries = await readdir(navDir);
+      for (const entry of entries) {
+        if (!entry.endsWith(".xml")) continue;
+        const content = await readFileSafe(join(navDir, entry));
+        if (!content) continue;
+        const rel = relative(project.root, join(navDir, entry)).replace(/\\/g, "/");
+        routes.push(...extractNavigationRoutes(rel, content));
+      }
+    } catch {}
+  }
+
+  // 3. Activities from AndroidManifest.xml
+  const manifestPaths = [
+    join(project.root, "app", "src", "main", "AndroidManifest.xml"),
+    join(project.root, "src", "main", "AndroidManifest.xml"),
+    join(project.root, "AndroidManifest.xml"),
+  ];
+  for (const mp of manifestPaths) {
+    const content = await readFileSafe(mp);
+    if (!content) continue;
+    const rel = relative(project.root, mp).replace(/\\/g, "/");
+    routes.push(...extractActivitiesFromManifest(rel, content));
+    break;
+  }
+
+  return routes;
 }
 
 // ─── Route Prefix Resolution ──────────────────────────────────────────────────
@@ -1261,35 +1535,58 @@ async function resolveRoutePrefixes(
   files: string[],
   project: ProjectInfo
 ): Promise<RouteInfo[]> {
-  // prefixMap: relativeFilePath → mount prefix
-  const prefixMap = new Map<string, string>();
+  // Build mount graph by scanning ALL source files (not just entry points).
+  // This handles multi-level routing: app.ts → routes.ts → auth.ts
+  // mountEdges: targetFile → { prefix, mountedBy }
+  const mountEdges = new Map<string, { prefix: string; mountedBy: string }>();
 
-  // Entry point files where mount registrations live
-  const entryFiles = files.filter(f => {
-    const rel = relative(project.root, f).replace(/\\/g, "/");
-    return (
-      /^(?:src\/)?(?:index|server|app|main)\.(ts|js|mjs|py)$/.test(rel) ||
-      /^apps\/[^/]+\/(?:src\/)?(?:index|server|app|main)\.(ts|js|mjs)$/.test(rel) ||
-      /^backend\/(?:server|app|main)\.py$/.test(rel)
-    );
-  });
+  const sourceFiles = files.filter(f => f.match(/\.(ts|js|mjs|cjs|py)$/));
 
-  for (const entryFile of entryFiles) {
-    const content = await readFileSafe(entryFile);
-    const entryRel = relative(project.root, entryFile).replace(/\\/g, "/");
-    const entryDir = entryRel.includes("/") ? entryRel.split("/").slice(0, -1).join("/") : "";
+  for (const file of sourceFiles) {
+    const content = await readFileSafe(file);
+    if (!content) continue;
 
-    if (entryFile.endsWith(".py")) {
-      parsePythonPrefixes(content, entryDir, files, project, prefixMap);
+    const rel = relative(project.root, file).replace(/\\/g, "/");
+    const dir = rel.includes("/") ? rel.split("/").slice(0, -1).join("/") : "";
+
+    if (file.endsWith(".py")) {
+      if (content.includes("include_router")) {
+        parsePythonMountsToGraph(content, dir, files, project, mountEdges, rel);
+      }
     } else {
-      parseJSPrefixes(content, entryDir, files, project, prefixMap);
+      if (content.includes(".route(") || content.includes(".use(")) {
+        parseJSMountsToGraph(content, dir, files, project, mountEdges, rel);
+      }
     }
   }
 
-  if (prefixMap.size === 0) return routes;
+  if (mountEdges.size === 0) return routes;
+
+  // Resolve full prefix for each file by walking up the mount graph.
+  // Handles chaining: if app.ts mounts routes.ts at /api, and routes.ts
+  // mounts auth.ts at /auth, auth.ts routes get /api/auth prefix.
+  const resolvedCache = new Map<string, string>();
+
+  function resolveFullPrefix(file: string, visited: Set<string>): string {
+    if (resolvedCache.has(file)) return resolvedCache.get(file)!;
+    if (visited.has(file)) return ""; // cycle protection
+    visited.add(file);
+
+    const edge = mountEdges.get(file);
+    if (!edge) {
+      resolvedCache.set(file, "");
+      return "";
+    }
+
+    const parentPrefix = resolveFullPrefix(edge.mountedBy, new Set(visited));
+    const full = (parentPrefix + edge.prefix).replace(/\/\//g, "/");
+    resolvedCache.set(file, full);
+    return full;
+  }
 
   return routes.map(route => {
-    const prefix = prefixMap.get(route.file);
+    const routeFile = route.file.replace(/\\/g, "/");
+    const prefix = resolveFullPrefix(routeFile, new Set());
     if (!prefix || prefix === "/") return route;
     // Don't double-prefix if path already starts with it
     if (route.path.startsWith(prefix + "/") || route.path === prefix) return route;
@@ -1299,13 +1596,14 @@ async function resolveRoutePrefixes(
   });
 }
 
-/** TypeScript/JavaScript: scan for app.route("/prefix", varName) */
-function parseJSPrefixes(
+/** TypeScript/JavaScript: scan ALL files for .route()/.use() mount registrations */
+function parseJSMountsToGraph(
   content: string,
   entryDir: string,
   files: string[],
   project: ProjectInfo,
-  prefixMap: Map<string, string>
+  mountEdges: Map<string, { prefix: string; mountedBy: string }>,
+  sourceFile: string
 ): void {
   // Map: varName → relative source file
   const importMap = new Map<string, string>();
@@ -1330,14 +1628,23 @@ function parseJSPrefixes(
     if (resolved) importMap.set(m[1], resolved);
   }
 
+  // CommonJS: const authRoutes = require("./routes/auth")
+  const requireRe = /(?:const|let|var)\s+(\w+)\s*=\s*require\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
+  while ((m = requireRe.exec(content)) !== null) {
+    const resolved = resolveJSImport(m[2], entryDir, files, project);
+    if (resolved) importMap.set(m[1], resolved);
+  }
+
   // app.route("/prefix", varName) or app.use("/prefix", varName)
   const mountRe = /\.\s*(?:route|use)\s*\(\s*['"`]([^'"`]+)['"`]\s*,\s*(\w+)/g;
   while ((m = mountRe.exec(content)) !== null) {
     const prefix = m[1];
     const varName = m[2];
     if (!prefix || prefix === "/" || prefix === "*") continue;
-    const sourceFile = importMap.get(varName);
-    if (sourceFile) prefixMap.set(sourceFile, prefix);
+    const targetFile = importMap.get(varName);
+    if (targetFile && !mountEdges.has(targetFile)) {
+      mountEdges.set(targetFile, { prefix, mountedBy: sourceFile });
+    }
   }
 }
 
@@ -1377,12 +1684,13 @@ function resolveJSImport(
 }
 
 /** Python/FastAPI: scan for APIRouter(prefix=...) + include_router() chains */
-function parsePythonPrefixes(
+function parsePythonMountsToGraph(
   content: string,
-  entryDir: string,
+  _entryDir: string,
   files: string[],
   project: ProjectInfo,
-  prefixMap: Map<string, string>
+  mountEdges: Map<string, { prefix: string; mountedBy: string }>,
+  sourceFile: string
 ): void {
   // Step 1: Build alias map: "auth_router" → "backend/routes/auth.py"
   //   from routes.auth import router as auth_router
@@ -1392,9 +1700,7 @@ function parsePythonPrefixes(
   while ((m = aliasRe.exec(content)) !== null) {
     const moduleDots = m[1];
     const alias = m[2];
-    // Convert dotted module to file path (relative or absolute)
     const modPath = moduleDots.replace(/\./g, "/");
-    // Try to find the file matching this module path
     const hit = files.find(f => {
       const rel = f.replace(/\\/g, "/");
       return rel.endsWith(`/${modPath}.py`) || rel.endsWith(`${modPath}.py`);
@@ -1428,9 +1734,9 @@ function parsePythonPrefixes(
     const parentPrefix = routerPrefixes.get(parentVar) || "";
     const fullPrefix = parentPrefix + extraPrefix;
 
-    const sourceFile = aliasMap.get(childVar);
-    if (sourceFile && fullPrefix) {
-      prefixMap.set(sourceFile, fullPrefix);
+    const targetFile = aliasMap.get(childVar);
+    if (targetFile && fullPrefix && !mountEdges.has(targetFile)) {
+      mountEdges.set(targetFile, { prefix: fullPrefix, mountedBy: sourceFile });
     }
   }
 }

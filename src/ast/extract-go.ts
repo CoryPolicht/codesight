@@ -267,12 +267,12 @@ export function extractGORMModelsStructured(
     const body = extractBraceBlock(content, bodyStart);
     if (!body) continue;
 
-    // Check if this is a GORM model
+    // Check if this is a GORM model — require gorm.Model embed or gorm: tag.
+    // json: tags alone are too broad; every Go struct with JSON serialization would match.
     const isGormModel =
       body.includes("gorm.Model") ||
       body.includes("gorm.DeletedAt") ||
-      body.includes("`gorm:") ||
-      body.includes("`json:");
+      body.includes("`gorm:");
 
     if (!isGormModel) continue;
 

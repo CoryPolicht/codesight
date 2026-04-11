@@ -1,5 +1,9 @@
 import { relative, extname } from "node:path";
 import { readFileSafe } from "../scanner.js";
+import { extractDartExports } from "../ast/extract-dart.js";
+import { extractSwiftExports } from "../ast/extract-swift.js";
+import { extractCSharpExports } from "../ast/extract-csharp.js";
+import { extractPhpExports } from "../ast/extract-php.js";
 import type { LibExport, ExportItem, ProjectInfo } from "../types.js";
 
 const SKIP_DIRS = [
@@ -14,8 +18,6 @@ const SKIP_DIRS = [
   "/test/",
   "/tests/",
   "/stories/",
-  "/Migrations/",
-  "/migrations/",
 ];
 
 export async function detectLibs(
@@ -24,15 +26,16 @@ export async function detectLibs(
 ): Promise<LibExport[]> {
   const libFiles = files.filter((f) => {
     const ext = extname(f);
-    if (![".	s", ".js", ".mjs", ".py", ".go", ".cs"].includes(ext)) return false;
+    if (![".ts", ".js", ".mjs", ".py", ".go", ".dart", ".swift", ".cs", ".php"].includes(ext)) return false;
     if (f.endsWith(".test.ts") || f.endsWith(".spec.ts")) return false;
     if (f.endsWith(".test.js") || f.endsWith(".spec.js")) return false;
     if (f.endsWith(".d.ts")) return false;
     if (f.endsWith("_test.py") || f.endsWith("_test.go")) return false;
-    if (f.endsWith(".Designer.cs") || f.endsWith(".g.cs")) return false;
+    if (f.endsWith("_test.dart") || f.endsWith(".g.dart")) return false;
+    if (f.endsWith("Tests.swift") || f.endsWith("_test.swift")) return false;
     // Skip component/page/route files
     if (f.endsWith(".tsx") || f.endsWith(".jsx")) return false;
-    if (SKIP_DIRS.some((d) => f.replace(/\\/g, "/").includes(d))) return false;
+    if (SKIP_DIRS.some((d) => f.includes(d))) return false;
     return true;
   });
 
@@ -50,8 +53,14 @@ export async function detectLibs(
       exports = extractPythonExports(content);
     } else if (ext === ".go") {
       exports = extractGoExports(content);
+    } else if (ext === ".dart") {
+      exports = extractDartExports(content);
+    } else if (ext === ".swift") {
+      exports = extractSwiftExports(content);
     } else if (ext === ".cs") {
       exports = extractCSharpExports(content);
+    } else if (ext === ".php") {
+      exports = extractPhpExports(content);
     } else {
       exports = extractTSExports(content);
     }
@@ -228,45 +237,4 @@ function compactParams(params: string): string {
     })
     .filter(Boolean)
     .join(", ");
-}
-
-function extractCSharpExports(content: string): ExportItem[] {
-  const exports: ExportItem[] = [];
-
-  // public [static|abstract|sealed|partial|...] class/interface/record/enum Name
-  const typePattern =
-    /public\s+(?:(?:static|abstract|sealed|partial|readonly)\s+)*(?:(class|interface|record|enum|struct))\s+(\w+)/g;
-  let match: RegExpExecArray | null;
-  while ((match = typePattern.exec(content)) !== null) {
-    const kind = match[1];
-    const name = match[2];
-    // Skip auto-generated / infrastructure names
-    if (name.endsWith("Context") || name.endsWith("Migration") || name.endsWith("Snapshot")) continue;
-    exports.push({
-      name,
-      kind: kind === "enum" ? "enum" : kind === "interface" ? "interface" : "class",
-    });
-  }
-
-  // public [static|async|virtual|override|...] ReturnType MethodName(...)
-  // Avoid matching property accessors (no parentheses)
-  const methodPattern =
-    /public\s+(?:(?:static|async|virtual|override|abstract|new)\s+)*(?:Task<[^>]+>|IActionResult|IResult|ActionResult(?:<[^>]+>)?|[\w<>[\]?,\s]+?)\s+(\w+)\s*\(/g;
-  while ((match = methodPattern.exec(content)) !== null) {
-    const name = match[1];
-    // Skip property getter/setters / constructor duplicates / common noise
-    if (name === "get" || name === "set" || name === "add" || name === "remove") continue;
-    // Skip if already captured as a type
-    if (exports.some((e) => e.name === name && e.kind === "class")) continue;
-    exports.push({ name, kind: "function" });
-  }
-
-  // Deduplicate by name+kind
-  const seen = new Set<string>();
-  return exports.filter((e) => {
-    const key = `${e.kind}:${e.name}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
 }

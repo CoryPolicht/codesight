@@ -1,5 +1,7 @@
 import { resolve, join } from "node:path";
-import { collectFiles, detectProject } from "./scanner.js";
+import { readFile } from "node:fs/promises";
+import { collectFiles, detectProject, readCodesightIgnore } from "./scanner.js";
+import { loadConfig } from "./config.js";
 import { detectRoutes } from "./detectors/routes.js";
 import { detectSchemas } from "./detectors/schema.js";
 import { detectComponents } from "./detectors/components.js";
@@ -9,7 +11,9 @@ import { detectMiddleware } from "./detectors/middleware.js";
 import { detectDependencyGraph } from "./detectors/graph.js";
 import { enrichRouteContracts } from "./detectors/contracts.js";
 import { calculateTokenStats } from "./detectors/tokens.js";
-import { writeOutput } from "./formatter.js";
+import { detectGraphQLRoutes, detectGRPCRoutes, detectWebSocketRoutes } from "./detectors/graphql.js";
+import { detectEvents } from "./detectors/events.js";
+import { writeOutput, computeCrudGroups } from "./formatter.js";
 import { analyzeBlastRadius, analyzeMultiFileBlastRadius } from "./detectors/blast-radius.js";
 import { readWikiArticle, listWikiArticles, lintWiki } from "./generators/wiki.js";
 import type { ScanResult } from "./types.js";
@@ -33,8 +37,18 @@ interface JsonRpcResponse {
   error?: { code: number; message: string; data?: any };
 }
 
+let transportMode: "framed" | "newline" = "framed";
+
+function looksLikeFramedTransport(buffer: string) {
+  return /^Content-Length\s*:/i.test(buffer);
+}
+
 function send(msg: JsonRpcResponse) {
   const json = JSON.stringify(msg);
+  if (transportMode === "newline") {
+    process.stdout.write(`${json}\n`);
+    return;
+  }
   const header = `Content-Length: ${Buffer.byteLength(json)}\r\n\r\n`;
   process.stdout.write(header + json);
 }
@@ -50,20 +64,29 @@ async function getScanResult(directory?: string): Promise<ScanResult> {
   if (cachedResult && cachedRoot === root) return cachedResult;
 
   const project = await detectProject(root);
-  const files = await collectFiles(root, 10);
+  const userConfig = await loadConfig(root);
+  const ignoreFromFile = await readCodesightIgnore(root);
+  const allIgnore = [...(userConfig.ignorePatterns ?? []), ...ignoreFromFile];
+  const files = await collectFiles(root, userConfig.maxDepth ?? 10, allIgnore);
 
-  const [rawRoutes, schemas, components, libs, config, middleware, graph] =
-    await Promise.all([
-      detectRoutes(files, project),
-      detectSchemas(files, project),
-      detectComponents(files, project),
-      detectLibs(files, project),
-      detectConfig(files, project),
-      detectMiddleware(files, project),
-      detectDependencyGraph(files, project),
-    ]);
+  const [rawHttpRoutes, schemas, components, libs, config, middleware, graph,
+         graphqlRoutes, grpcRoutes, wsRoutes, events] = await Promise.all([
+    detectRoutes(files, project),
+    detectSchemas(files, project),
+    detectComponents(files, project),
+    detectLibs(files, project),
+    detectConfig(files, project),
+    detectMiddleware(files, project),
+    detectDependencyGraph(files, project),
+    detectGraphQLRoutes(files, project),
+    detectGRPCRoutes(files, project),
+    detectWebSocketRoutes(files, project),
+    detectEvents(files, project),
+  ]);
 
+  const rawRoutes = [...rawHttpRoutes, ...graphqlRoutes, ...grpcRoutes, ...wsRoutes];
   const routes = await enrichRouteContracts(rawRoutes, project);
+  const crudGroups = computeCrudGroups(routes);
 
   const tempResult: ScanResult = {
     project,
@@ -75,6 +98,8 @@ async function getScanResult(directory?: string): Promise<ScanResult> {
     middleware,
     graph,
     tokenStats: { outputTokens: 0, estimatedExplorationTokens: 0, saved: 0, fileCount: files.length },
+    events: events.length > 0 ? events : undefined,
+    crudGroups: crudGroups.length > 0 ? crudGroups : undefined,
   };
 
   const outputContent = await writeOutput(tempResult, resolve(root, ".codesight"));
@@ -90,10 +115,7 @@ async function getScanResult(directory?: string): Promise<ScanResult> {
 async function toolScan(args: any): Promise<string> {
   const result = await getScanResult(args.directory);
   const outputContent = await writeOutput(result, resolve(cachedRoot!, ".codesight"));
-  return outputContent.replace(
-    /Saves ~\d[\d,]* tokens/,
-    `Saves ~${result.tokenStats.saved.toLocaleString()} tokens`
-  );
+  return outputContent.replace(/Saves ~\d[\d,]* tokens/, `Saves ~${result.tokenStats.saved.toLocaleString()} tokens`);
 }
 
 async function toolGetRoutes(args: any): Promise<string> {
@@ -119,9 +141,7 @@ async function toolGetRoutes(args: any): Promise<string> {
     return `${r.method} ${r.path}${params}${tags} — ${r.file}`;
   });
 
-  return lines.length > 0
-    ? `${lines.length} routes:\n${lines.join("\n")}`
-    : "No routes found matching filters.";
+  return lines.length > 0 ? `${lines.length} routes:\n${lines.join("\n")}` : "No routes found matching filters.";
 }
 
 async function toolGetSchema(args: any): Promise<string> {
@@ -145,9 +165,7 @@ async function toolGetSchema(args: any): Promise<string> {
     lines.push("");
   }
 
-  return lines.length > 0
-    ? `${models.length} models:\n${lines.join("\n")}`
-    : "No models found.";
+  return lines.length > 0 ? `${models.length} models:\n${lines.join("\n")}` : "No models found.";
 }
 
 async function toolGetBlastRadius(args: any): Promise<string> {
@@ -234,9 +252,7 @@ async function toolGetHotFiles(args: any): Promise<string> {
 
   if (hotFiles.length === 0) return "No import graph data. Run a full scan first.";
 
-  const lines = hotFiles.map((h) =>
-    `${h.file} — imported by ${h.importedBy} files`
-  );
+  const lines = hotFiles.map((h) => `${h.file} — imported by ${h.importedBy} files`);
 
   return `Top ${hotFiles.length} most-imported files (change carefully):\n${lines.join("\n")}`;
 }
@@ -255,24 +271,38 @@ async function toolGetSummary(args: any): Promise<string> {
     lines.push(`Monorepo: ${project.workspaces.map((w) => w.name).join(", ")}`);
   }
   lines.push("");
-  lines.push(`${routes.length} routes | ${schemas.length} models | ${components.length} components | ${config.envVars.length} env vars | ${middleware.length} middleware | ${graph.edges.length} import links`);
+  lines.push(
+    `${routes.length} routes | ${schemas.length} models | ${components.length} components | ${config.envVars.length} env vars | ${middleware.length} middleware | ${graph.edges.length} import links`,
+  );
   lines.push(`Token savings: ~${tokenStats.saved.toLocaleString()} per conversation`);
   lines.push("");
 
   // Top routes summary
   if (routes.length > 0) {
-    lines.push(`Key API areas: ${[...new Set(routes.map((r) => r.path.split("/").slice(0, 3).join("/")))].slice(0, 8).join(", ")}`);
+    lines.push(
+      `Key API areas: ${[...new Set(routes.map((r) => r.path.split("/").slice(0, 3).join("/")))].slice(0, 8).join(", ")}`,
+    );
   }
 
   // Hot files
   if (graph.hotFiles.length > 0) {
-    lines.push(`High-impact files: ${graph.hotFiles.slice(0, 5).map((h) => h.file).join(", ")}`);
+    lines.push(
+      `High-impact files: ${graph.hotFiles
+        .slice(0, 5)
+        .map((h) => h.file)
+        .join(", ")}`,
+    );
   }
 
   // Required env
   const required = config.envVars.filter((e) => !e.hasDefault);
   if (required.length > 0) {
-    lines.push(`Required env: ${required.slice(0, 8).map((e) => e.name).join(", ")}${required.length > 8 ? ` +${required.length - 8} more` : ""}`);
+    lines.push(
+      `Required env: ${required
+        .slice(0, 8)
+        .map((e) => e.name)
+        .join(", ")}${required.length > 8 ? ` +${required.length - 8} more` : ""}`,
+    );
   }
 
   lines.push("");
@@ -320,6 +350,87 @@ async function toolLintWiki(args: any): Promise<string> {
   return lintWiki(result, outputDir);
 }
 
+async function toolGetEvents(args: any): Promise<string> {
+  const result = await getScanResult(args.directory);
+  const events = result.events;
+  if (!events || events.length === 0) {
+    return "No async events or queues detected. Events are auto-detected from BullMQ, Kafka, Redis pub/sub, Socket.io, and EventEmitter usage.";
+  }
+
+  let filtered = events;
+  if (args.system) {
+    filtered = events.filter((e) => e.system === args.system);
+    if (filtered.length === 0) return `No events found for system: ${args.system}`;
+  }
+
+  const lines = [`Events & Queues (${filtered.length} total)`, ""];
+  const bySystem = new Map<string, typeof filtered>();
+  for (const e of filtered) {
+    if (!bySystem.has(e.system)) bySystem.set(e.system, []);
+    bySystem.get(e.system)!.push(e);
+  }
+  for (const [system, items] of bySystem) {
+    lines.push(`## ${system}`);
+    for (const item of items) {
+      lines.push(`- ${item.name} [${item.type}] — ${item.file}`);
+    }
+    lines.push("");
+  }
+  return lines.join("\n");
+}
+
+async function toolGetCoverage(args: any): Promise<string> {
+  const result = await getScanResult(args.directory);
+  const cov = result.testCoverage;
+  if (!cov || cov.testFiles.length === 0) {
+    return "No test files detected. Add test files matching *.test.ts, *.spec.ts, test_*.py, *_test.go, etc.";
+  }
+
+  const httpRoutes = result.routes.filter(
+    (r) => !["QUERY", "MUTATION", "SUBSCRIPTION", "RPC", "WS", "WS-ROOM"].includes(r.method)
+  );
+  const uncoveredRoutes = httpRoutes.filter(
+    (r) => !cov.testedRoutes.includes(`${r.method}:${r.path}`)
+  );
+  const uncoveredModels = result.schemas
+    .filter((m) => !m.name.startsWith("enum:") && !cov.testedModels.includes(m.name));
+
+  const lines = [
+    `Test Coverage: ${cov.coveragePercent}%`,
+    `Test files: ${cov.testFiles.length}`,
+    `Covered routes: ${cov.testedRoutes.length}/${httpRoutes.length}`,
+    `Covered models: ${cov.testedModels.length}/${result.schemas.filter((m) => !m.name.startsWith("enum:")).length}`,
+    "",
+  ];
+
+  if (uncoveredRoutes.length > 0) {
+    lines.push(`Uncovered routes (${uncoveredRoutes.length}):`);
+    for (const r of uncoveredRoutes.slice(0, 20)) {
+      lines.push(`  ${r.method} ${r.path} — ${r.file}`);
+    }
+    if (uncoveredRoutes.length > 20) lines.push(`  ... +${uncoveredRoutes.length - 20} more`);
+    lines.push("");
+  }
+
+  if (uncoveredModels.length > 0) {
+    lines.push(`Uncovered models: ${uncoveredModels.map((m) => m.name).join(", ")}`);
+  }
+
+  return lines.join("\n");
+}
+
+async function toolGetKnowledge(args: any): Promise<string> {
+  const dir = args.directory ? resolve(args.directory) : process.cwd();
+  const config = await loadConfig(dir);
+  const outputDirName = config.outputDir ?? ".codesight";
+  const knowledgePath = join(dir, outputDirName, "KNOWLEDGE.md");
+  try {
+    return await readFile(knowledgePath, "utf8");
+  } catch {
+    return `Knowledge map not found. Run \`npx codesight --mode knowledge\` in ${dir} to generate it.\n\nThis scans all .md/.mdx files and extracts decisions, open questions, people, and recurring themes into a compact AI context file.`;
+  }
+}
+
 // =================== TOOL DEFINITIONS ===================
 
 const TOOLS = [
@@ -364,8 +475,7 @@ const TOOLS = [
   },
   {
     name: "codesight_get_schema",
-    description:
-      "Get database models with fields, types, constraints, and relations. Optionally filter by model name.",
+    description: "Get database models with fields, types, constraints, and relations. Optionally filter by model name.",
     inputSchema: {
       type: "object",
       properties: {
@@ -384,7 +494,11 @@ const TOOLS = [
       properties: {
         directory: { type: "string", description: "Directory (defaults to cwd)" },
         file: { type: "string", description: "Single file path (relative to project root)" },
-        files: { type: "array", items: { type: "string" }, description: "Multiple file paths for combined blast radius" },
+        files: {
+          type: "array",
+          items: { type: "string" },
+          description: "Multiple file paths for combined blast radius",
+        },
         depth: { type: "number", description: "Max traversal depth (default: 3)" },
       },
     },
@@ -392,8 +506,7 @@ const TOOLS = [
   },
   {
     name: "codesight_get_env",
-    description:
-      "Get environment variables across the codebase with required/default status and source file.",
+    description: "Get environment variables across the codebase with required/default status and source file.",
     inputSchema: {
       type: "object",
       properties: {
@@ -418,8 +531,7 @@ const TOOLS = [
   },
   {
     name: "codesight_refresh",
-    description:
-      "Force re-scan the project. Use after making significant changes to get updated context.",
+    description: "Force re-scan the project. Use after making significant changes to get updated context.",
     inputSchema: {
       type: "object",
       properties: {
@@ -470,6 +582,43 @@ const TOOLS = [
     },
     handler: toolLintWiki,
   },
+  {
+    name: "codesight_get_events",
+    description:
+      "Get event queues, Kafka topics, Redis pub/sub channels, and EventEmitter events detected in the project. Useful for understanding async data flows.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        directory: { type: "string", description: "Directory (defaults to cwd)" },
+        system: { type: "string", description: "Filter by system: bullmq | kafka | redis-pub-sub | socket.io | eventemitter" },
+      },
+    },
+    handler: toolGetEvents,
+  },
+  {
+    name: "codesight_get_coverage",
+    description:
+      "Get test coverage summary: which routes and models have corresponding tests. Shows coverage percentage and lists uncovered endpoints.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        directory: { type: "string", description: "Directory (defaults to cwd)" },
+      },
+    },
+    handler: toolGetCoverage,
+  },
+  {
+    name: "codesight_get_knowledge",
+    description:
+      "Get the knowledge map for a second-brain or docs folder: decisions made, open questions, recurring themes, people mentioned, and an index of all notes by type (ADR, meeting, retro, spec, etc.). Run `npx codesight --mode knowledge` first to generate it.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        directory: { type: "string", description: "Directory (defaults to cwd)" },
+      },
+    },
+    handler: toolGetKnowledge,
+  },
 ];
 
 // =================== MCP PROTOCOL ===================
@@ -482,7 +631,7 @@ async function handleRequest(req: JsonRpcRequest) {
       result: {
         protocolVersion: "2024-11-05",
         capabilities: { tools: {} },
-        serverInfo: { name: "codesight", version: "1.2.0" },
+        serverInfo: { name: "codesight", version: "1.10.0" },
       },
     });
     return;
@@ -553,9 +702,21 @@ async function handleRequest(req: JsonRpcRequest) {
 }
 
 export async function startMCPServer() {
+  transportMode = "framed";
   let buffer = "";
   const messageQueue: JsonRpcRequest[] = [];
   let processing = false;
+
+  function enqueueRawJson(raw: string) {
+    const trimmed = raw.trim();
+    if (!trimmed) return;
+    try {
+      const req = JSON.parse(trimmed) as JsonRpcRequest;
+      messageQueue.push(req);
+    } catch {
+      send({ jsonrpc: "2.0", id: null, error: { code: -32700, message: "Parse error" } });
+    }
+  }
 
   async function processQueue() {
     if (processing) return;
@@ -577,7 +738,20 @@ export async function startMCPServer() {
 
     while (true) {
       const headerEnd = buffer.indexOf("\r\n\r\n");
-      if (headerEnd === -1) break;
+      if (headerEnd === -1) {
+        if (looksLikeFramedTransport(buffer)) break;
+
+        const newlineIndex = buffer.indexOf("\n");
+        if (newlineIndex === -1) break;
+
+        const line = buffer.substring(0, newlineIndex);
+        buffer = buffer.substring(newlineIndex + 1);
+        transportMode = "newline";
+        enqueueRawJson(line);
+        continue;
+      }
+
+      transportMode = "framed";
 
       const header = buffer.substring(0, headerEnd);
       const lengthMatch = header.match(/Content-Length:\s*(\d+)/i);
@@ -603,6 +777,14 @@ export async function startMCPServer() {
     }
 
     processQueue();
+  });
+
+  process.stdin.on("end", () => {
+    if (buffer.trim()) {
+      enqueueRawJson(buffer);
+      buffer = "";
+      processQueue();
+    }
   });
 
   await new Promise(() => {});

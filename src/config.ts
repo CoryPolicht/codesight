@@ -97,12 +97,13 @@ async function loadTsConfig(configPath: string, _root: string): Promise<Codesigh
  */
 export function mergeCliConfig(
   config: CodesightConfig,
-  cli: { maxDepth?: number; outputDir?: string; profile?: string }
+  cli: { maxDepth?: number; outputDir?: string; profile?: string; maxTokens?: number }
 ): CodesightConfig {
   return {
     ...config,
     maxDepth: cli.maxDepth ?? config.maxDepth,
     outputDir: cli.outputDir ?? config.outputDir,
     profile: (cli.profile as CodesightConfig["profile"]) ?? config.profile,
+    maxTokens: cli.maxTokens ?? config.maxTokens,
   };
 }

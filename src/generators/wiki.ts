@@ -601,9 +601,13 @@ export async function readWikiArticle(
   article: string
 ): Promise<string | null> {
   const { readFile } = await import("node:fs/promises");
+  const { resolve } = await import("node:path");
   const name = article.endsWith(".md") ? article : `${article}.md`;
+  const wikiDir = resolve(outputDir, "wiki");
+  const resolved = resolve(wikiDir, name);
+  if (!resolved.startsWith(wikiDir + "/") && resolved !== wikiDir) return null;
   try {
-    return await readFile(join(outputDir, "wiki", name), "utf-8");
+    return await readFile(resolved, "utf-8");
   } catch {
     return null;
   }
