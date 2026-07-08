@@ -897,6 +897,6 @@ If codesight saves you tokens, [star it on GitHub](https://github.com/Houseofmvp
 
 [![GitHub stars](https://img.shields.io/github/stars/Houseofmvps/codesight?style=for-the-badge&logo=github&color=gold)](https://github.com/Houseofmvps/codesight/stargazers)
 
-Built by [Kailesk Khumar](https://www.linkedin.com/in/kailesk-khumar) · [Book a 30-min strategy call](https://cal.com/houseofmvps/30-min-strategy-call-with-kailesk-khumar)
+Built by [Kailesk Khumar](https://www.linkedin.com/in/kailesk-khumar) · [Book a 30-min strategy call](https://cal.com/houseofmvps/30-min-strategy-call-with-our-founder)
 
 </div>
