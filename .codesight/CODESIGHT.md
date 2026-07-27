@@ -2,18 +2,18 @@
 
 > **Stack:** raw-http | none | unknown | typescript
 
-> 4 routes (8 inferred) + 1 graphql + 3 ws | 0 models | 0 components | 67 lib files | 10 env vars | 5 middleware | 13 events | 60% test coverage
-> **Token savings:** this file is ~5,600 tokens. Without it, AI exploration would cost ~34,800 tokens. **Saves ~29,100 tokens per conversation.**
-> **Last scanned:** 2026-07-08 00:08 — re-run after significant changes
+> 4 routes (8 inferred) + 1 graphql + 3 ws | 0 models | 0 components | 68 lib files | 17 env vars | 5 middleware | 13 events | 60% test coverage
+> **Token savings:** this file is ~5,800 tokens. Without it, AI exploration would cost ~35,900 tokens. **Saves ~30,200 tokens per conversation.**
+> **Last scanned:** 2026-07-27 13:30 — re-run after significant changes
 
 ---
 
 # Routes
 
-- `ALL` `/path` [auth, db, cache, queue, email, payment, upload, ai] `[inferred]`
-- `ALL` `/api` [auth, db, cache, queue, email, payment, upload, ai] `[inferred]`
-- `ALL` `/health` [auth, db, cache, queue, payment] `[inferred]` ✓
-- `GET` `/api/users` [auth, db, cache, queue, payment] `[inferred]` ✓
+- `ALL` `/path` `[inferred]`
+- `ALL` `/api` `[inferred]`
+- `ALL` `/health` [auth, db, cache, payment] `[inferred]` ✓
+- `GET` `/api/users` [auth, db, cache, payment] `[inferred]` ✓
 
 ## GraphQL
 
@@ -84,7 +84,7 @@
   - function extractDjangoModelsAST: (filePath, content) => Promise<SchemaModel[] | null>
   - function extractSQLModelAST: (filePath, content) => Promise<SchemaModel[] | null>
   - function isPythonAvailable: () => Promise<boolean>
-- `src/ast/extract-routes.ts` — function extractRoutesAST: (ts, filePath, content, framework, tags) => RouteInfo[]
+- `src/ast/extract-routes.ts` — function extractRoutesAST: (ts, filePath, content, framework) => RouteInfo[]
 - `src/ast/extract-scenegraph.ts`
   - function extractSceneGraphComponent: (content) => SceneGraphComponent | null
   - function extractMainSceneScreens: (content) => Record<string, string>
@@ -145,10 +145,12 @@
   - function mergeNativeSchemas: (builtin, native) => SchemaModel[]
   - interface NativeExtraction
 - `src/detectors/openapi.ts` — function detectOpenAPISpec: (root, project) => Promise<OpenAPIResult>, interface OpenAPIResult
-- `src/detectors/routes.ts`
+- `src/detectors/route-tags.ts`
+  - function stripCommentsForTags: (content) => string
   - function detectTags: (content) => string[]
-  - function detectRoutes: (files, project, config?) => Promise<RouteInfo[]>
-  - const GET
+  - function detectTagsScoped: (content, starts) => string[][]
+  - function detectTagsForLineSpan: (lines, startLine, endLine) => string[]
+- `src/detectors/routes.ts` — function detectRoutes: (files, project, config?) => Promise<RouteInfo[]>, const GET
 - `src/detectors/schema.ts` — function detectSchemas: (files, project, config?) => Promise<SchemaModel[]>, const users
 - `src/detectors/tokens.ts` — function estimateTokens: (text) => number, function calculateTokenStats: (result, outputText, fileCount) => import("../types.js").TokenStats
 - `src/eval.ts` — function runEval: () => Promise<void>
@@ -229,16 +231,23 @@
 
 ## Environment Variables
 
+- `API_KEY` **required** — tests/detectors.test.ts
 - `CODESIGHT_NATIVE_AST` **required** — src/index.ts
 - `CODESIGHT_PLUGIN_DIR` **required** — src/index.ts
-- `CODESIGHT_REFERENCE_PLUGIN_DIR` **required** — tests/reference-plugin.test.ts
+- `CODESIGHT_REFERENCE_PLUGIN_DIR` (has default) — tests/reference-plugin.test.ts
 - `DATABASE_URL` **required** — tests/fixtures/config-app/.env.example
+- `ENABLE_LEGACY` (has default) — tests/detectors.test.ts
 - `JWT_SECRET` **required** — tests/fixtures/config-app/.env.example
 - `PORT` (has default) — tests/fixtures/config-app/.env.example
+- `REGION` (has default) — tests/detectors.test.ts
+- `SECRET` **required** — tests/detectors.test.ts
+- `TIMEOUT` (has default) — tests/detectors.test.ts
 - `VAR` **required** — src/detectors/config.ts
 - `VAR_NAME` **required** — src/detectors/config.ts
+- `VITE_MODE` (has default) — tests/detectors.test.ts
 - `VITE_VAR_NAME` **required** — src/detectors/config.ts
-- `XDG_DATA_HOME` **required** — src/ast/native-loader.ts
+- `X` **required** — src/detectors/config.ts
+- `XDG_DATA_HOME` (has default) — src/ast/native-loader.ts
 
 ## Config Files
 
@@ -271,19 +280,19 @@
 - `src/ast/extract-brightscript.ts` — imported by **5** files
 - `src/plugins/cicd/types.ts` — imported by **5** files
 - `src/plugins/githooks/types.ts` — imported by **5** files
+- `src/detectors/route-tags.ts` — imported by **4** files
 - `src/detectors/routes.ts` — imported by **4** files
 - `src/detectors/schema.ts` — imported by **3** files
 - `src/detectors/components.ts` — imported by **3** files
 - `src/detectors/config.ts` — imported by **3** files
 - `src/detectors/middleware.ts` — imported by **3** files
+- `src/detectors/graph.ts` — imported by **3** files
 - `src/formatter.ts` — imported by **3** files
 - `src/ast/extract-dart.ts` — imported by **3** files
 - `src/ast/extract-swift.ts` — imported by **3** files
 - `src/ast/extract-android.ts` — imported by **3** files
 - `src/ast/extract-scenegraph.ts` — imported by **3** files
 - `src/ast/extract-csharp.ts` — imported by **3** files
-- `src/ast/extract-php.ts` — imported by **3** files
-- `src/generators/ai-config.ts` — imported by **3** files
 
 ## Import Map (who imports what)
 
@@ -294,9 +303,9 @@
 - `src/ast/extract-brightscript.ts` ← `src/ast/extract-brighterscript.ts`, `src/detectors/events.ts`, `src/detectors/libs.ts`, `src/detectors/middleware.ts`, `src/detectors/routes.ts`
 - `src/plugins/cicd/types.ts` ← `src/plugins/cicd/circleci.ts`, `src/plugins/cicd/formatter.ts`, `src/plugins/cicd/github-actions.ts`, `src/plugins/cicd/index.ts`, `src/plugins/cicd/index.ts`
 - `src/plugins/githooks/types.ts` ← `src/plugins/githooks/formatter.ts`, `src/plugins/githooks/husky.ts`, `src/plugins/githooks/index.ts`, `src/plugins/githooks/lefthook.ts`, `src/plugins/githooks/raw.ts`
+- `src/detectors/route-tags.ts` ← `src/ast/extract-python.ts`, `src/ast/extract-routes.ts`, `src/detectors/routes.ts`, `src/detectors/routes.ts`
 - `src/detectors/routes.ts` ← `src/core.ts`, `src/detectors/native.ts`, `src/eval.ts`, `src/mcp-server.ts`
 - `src/detectors/schema.ts` ← `src/core.ts`, `src/eval.ts`, `src/mcp-server.ts`
-- `src/detectors/components.ts` ← `src/core.ts`, `src/eval.ts`, `src/mcp-server.ts`
 
 ---
 
@@ -338,7 +347,7 @@
 # Test Coverage
 
 > **60%** of routes and models are covered by tests
-> 193 test files found
+> 208 test files found
 
 ## Covered Routes
 

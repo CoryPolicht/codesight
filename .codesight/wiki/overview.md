@@ -6,17 +6,17 @@
 
 ## Scale
 
-8 API routes · 67 library files · 5 middleware layers · 10 environment variables
+8 API routes · 68 library files · 5 middleware layers · 17 environment variables
 
 ## Subsystems
 
-- **[Detectors.test](./detectors.test.md)** — 1 routes — touches: auth, db, cache, queue, payment
+- **[Detectors.test](./detectors.test.md)** — 1 routes — touches: auth, db, cache, payment
 - **[Graphql](./graphql.md)** — 4 routes
-- **[Path](./path.md)** — 1 routes — touches: auth, db, cache, queue, email
-- **[Infra](./infra.md)** — 1 routes — touches: auth, db, cache, queue, payment
-- **[Api](./api.md)** — 1 routes — touches: auth, db, cache, queue, email
+- **[Path](./path.md)** — 1 routes
+- **[Infra](./infra.md)** — 1 routes — touches: auth, db, cache, payment
+- **[Api](./api.md)** — 1 routes
 
-**Libraries:** 67 files — see [libraries.md](./libraries.md)
+**Libraries:** 68 files — see [libraries.md](./libraries.md)
 
 ## High-Impact Files
 
@@ -31,15 +31,16 @@ Changes to these files have the widest blast radius across the codebase:
 
 ## Required Environment Variables
 
+- `API_KEY` — `tests/detectors.test.ts`
 - `CODESIGHT_NATIVE_AST` — `src/index.ts`
 - `CODESIGHT_PLUGIN_DIR` — `src/index.ts`
-- `CODESIGHT_REFERENCE_PLUGIN_DIR` — `tests/reference-plugin.test.ts`
 - `DATABASE_URL` — `tests/fixtures/config-app/.env.example`
 - `JWT_SECRET` — `tests/fixtures/config-app/.env.example`
+- `SECRET` — `tests/detectors.test.ts`
 - `VAR` — `src/detectors/config.ts`
 - `VAR_NAME` — `src/detectors/config.ts`
 - `VITE_VAR_NAME` — `src/detectors/config.ts`
-- `XDG_DATA_HOME` — `src/ast/native-loader.ts`
+- `X` — `src/detectors/config.ts`
 
 ---
-_Back to [index.md](./index.md) · Generated 2026-07-08_
+_Back to [index.md](./index.md) · Generated 2026-07-27_

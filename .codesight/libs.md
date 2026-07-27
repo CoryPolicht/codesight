@@ -54,7 +54,7 @@
   - function extractDjangoModelsAST: (filePath, content) => Promise<SchemaModel[] | null>
   - function extractSQLModelAST: (filePath, content) => Promise<SchemaModel[] | null>
   - function isPythonAvailable: () => Promise<boolean>
-- `src/ast/extract-routes.ts` — function extractRoutesAST: (ts, filePath, content, framework, tags) => RouteInfo[]
+- `src/ast/extract-routes.ts` — function extractRoutesAST: (ts, filePath, content, framework) => RouteInfo[]
 - `src/ast/extract-scenegraph.ts`
   - function extractSceneGraphComponent: (content) => SceneGraphComponent | null
   - function extractMainSceneScreens: (content) => Record<string, string>
@@ -115,10 +115,12 @@
   - function mergeNativeSchemas: (builtin, native) => SchemaModel[]
   - interface NativeExtraction
 - `src/detectors/openapi.ts` — function detectOpenAPISpec: (root, project) => Promise<OpenAPIResult>, interface OpenAPIResult
-- `src/detectors/routes.ts`
+- `src/detectors/route-tags.ts`
+  - function stripCommentsForTags: (content) => string
   - function detectTags: (content) => string[]
-  - function detectRoutes: (files, project, config?) => Promise<RouteInfo[]>
-  - const GET
+  - function detectTagsScoped: (content, starts) => string[][]
+  - function detectTagsForLineSpan: (lines, startLine, endLine) => string[]
+- `src/detectors/routes.ts` — function detectRoutes: (files, project, config?) => Promise<RouteInfo[]>, const GET
 - `src/detectors/schema.ts` — function detectSchemas: (files, project, config?) => Promise<SchemaModel[]>, const users
 - `src/detectors/tokens.ts` — function estimateTokens: (text) => number, function calculateTokenStats: (result, outputText, fileCount) => import("../types.js").TokenStats
 - `src/eval.ts` — function runEval: () => Promise<void>

@@ -2,7 +2,7 @@
 
 > **Navigation aid.** Library inventory extracted via AST. Read the source files listed here before modifying exported functions.
 
-**67 library files** across 14 modules
+**68 library files** across 14 modules
 
 ## Plugins (20 files)
 
@@ -27,16 +27,17 @@
 - `src/plugins/terraform/formatter.ts` — formatInfrastructure
 - `src/plugins/terraform/index.ts` — createTerraformPlugin
 
-## Detectors (16 files)
+## Detectors (17 files)
 
 - `src/detectors/libs.ts` — detectLibs, name, name, Name, Name, Name, …
 - `src/detectors/native.ts` — detectNative, mergeNativeRoutes, mergeNativeSchemas, NativeExtraction
+- `src/detectors/route-tags.ts` — stripCommentsForTags, detectTags, detectTagsScoped, detectTagsForLineSpan
 - `src/detectors/graphql.ts` — detectGraphQLRoutes, detectGRPCRoutes, detectWebSocketRoutes
-- `src/detectors/routes.ts` — detectTags, detectRoutes, GET
 - `src/detectors/blast-radius.ts` — analyzeBlastRadius, analyzeMultiFileBlastRadius
 - `src/detectors/components.ts` — detectComponents, ComponentName
 - `src/detectors/coverage.ts` — isTestFile, detectTestCoverage
 - `src/detectors/openapi.ts` — detectOpenAPISpec, OpenAPIResult
+- `src/detectors/routes.ts` — detectRoutes, GET
 - `src/detectors/schema.ts` — detectSchemas, users
 - `src/detectors/tokens.ts` — estimateTokens, calculateTokenStats
 - `src/detectors/config.ts` — detectConfig

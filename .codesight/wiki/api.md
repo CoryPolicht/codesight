@@ -2,11 +2,11 @@
 
 > **Navigation aid.** Route list and file locations extracted via AST. Read the source files listed below before implementing or modifying this subsystem.
 
-The Api subsystem handles **1 routes** and touches: auth, db, cache, queue, email, payment, ai.
+The Api subsystem handles **1 routes**.
 
 ## Routes
 
-- `ALL` `/api` [auth, db, cache, queue, email, payment, upload, ai] `[inferred]`
+- `ALL` `/api` `[inferred]`
   `src/detectors/routes.ts`
 
 ## High-Impact Files

@@ -9,19 +9,19 @@
 - `src/ast/extract-brightscript.ts` — imported by **5** files
 - `src/plugins/cicd/types.ts` — imported by **5** files
 - `src/plugins/githooks/types.ts` — imported by **5** files
+- `src/detectors/route-tags.ts` — imported by **4** files
 - `src/detectors/routes.ts` — imported by **4** files
 - `src/detectors/schema.ts` — imported by **3** files
 - `src/detectors/components.ts` — imported by **3** files
 - `src/detectors/config.ts` — imported by **3** files
 - `src/detectors/middleware.ts` — imported by **3** files
+- `src/detectors/graph.ts` — imported by **3** files
 - `src/formatter.ts` — imported by **3** files
 - `src/ast/extract-dart.ts` — imported by **3** files
 - `src/ast/extract-swift.ts` — imported by **3** files
 - `src/ast/extract-android.ts` — imported by **3** files
 - `src/ast/extract-scenegraph.ts` — imported by **3** files
 - `src/ast/extract-csharp.ts` — imported by **3** files
-- `src/ast/extract-php.ts` — imported by **3** files
-- `src/generators/ai-config.ts` — imported by **3** files
 
 ## Import Map (who imports what)
 
@@ -32,6 +32,6 @@
 - `src/ast/extract-brightscript.ts` ← `src/ast/extract-brighterscript.ts`, `src/detectors/events.ts`, `src/detectors/libs.ts`, `src/detectors/middleware.ts`, `src/detectors/routes.ts`
 - `src/plugins/cicd/types.ts` ← `src/plugins/cicd/circleci.ts`, `src/plugins/cicd/formatter.ts`, `src/plugins/cicd/github-actions.ts`, `src/plugins/cicd/index.ts`, `src/plugins/cicd/index.ts`
 - `src/plugins/githooks/types.ts` ← `src/plugins/githooks/formatter.ts`, `src/plugins/githooks/husky.ts`, `src/plugins/githooks/index.ts`, `src/plugins/githooks/lefthook.ts`, `src/plugins/githooks/raw.ts`
+- `src/detectors/route-tags.ts` ← `src/ast/extract-python.ts`, `src/ast/extract-routes.ts`, `src/detectors/routes.ts`, `src/detectors/routes.ts`
 - `src/detectors/routes.ts` ← `src/core.ts`, `src/detectors/native.ts`, `src/eval.ts`, `src/mcp-server.ts`
 - `src/detectors/schema.ts` ← `src/core.ts`, `src/eval.ts`, `src/mcp-server.ts`
-- `src/detectors/components.ts` ← `src/core.ts`, `src/eval.ts`, `src/mcp-server.ts`

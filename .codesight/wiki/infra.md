@@ -2,11 +2,11 @@
 
 > **Navigation aid.** Route list and file locations extracted via AST. Read the source files listed below before implementing or modifying this subsystem.
 
-The Infra subsystem handles **1 routes** and touches: auth, db, cache, queue, payment.
+The Infra subsystem handles **1 routes** and touches: auth, db, cache, payment.
 
 ## Routes
 
-- `ALL` `/health` [auth, db, cache, queue, payment] `[inferred]`
+- `ALL` `/health` [auth, db, cache, payment] `[inferred]`
   `tests/detectors.test.ts`
 
 ## Source Files
