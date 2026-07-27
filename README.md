@@ -33,7 +33,7 @@ Code) · [claude-rank](https://github.com/Houseofmvps/claude-rank) (SEO/GEO/AEO 
 ---
 
 ```
-0 dependencies · Node.js >= 18 · 145 tests · 14 MCP tools · MIT · tested on 25+ OSS projects across 14 languages
+0 dependencies · Node.js >= 18 · 149 tests · 14 MCP tools · MIT · tested on 25+ OSS projects across 14 languages
 ```
 
 ## Works With
@@ -880,7 +880,7 @@ cd codesight
 pnpm install
 pnpm dev              # Run locally
 pnpm build            # Compile TypeScript
-pnpm test             # Run 145 tests
+pnpm test             # Run 149 tests
 ```
 
 PRs welcome. Open an issue first for large changes.

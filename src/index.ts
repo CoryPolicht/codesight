@@ -71,15 +71,6 @@ function printHelp() {
 `);
 }
 
-async function fileExists(path: string): Promise<boolean> {
-  try {
-    await stat(path);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 /** Split a comma list of language ids → normalized string[]. */
 function parseLangs(token: string): NativeLang[] {
   return token
@@ -149,14 +140,33 @@ function resolveNativeAstCli(cli: NativeAstCli, cliPluginDir: string): NativeAst
   return undefined; // no CLI/env opinion → config file decides
 }
 
-async function installGitHook(root: string, outputDirName: string) {
-  const hooksDir = join(root, ".git", "hooks");
-  const hookPath = join(hooksDir, "pre-commit");
+async function resolveGitHooksDir(root: string): Promise<string | null> {
+  // .git can be a gitlink FILE (worktrees, submodules, bare-repo checkouts), so
+  // the hooks dir must come from git itself rather than an assumed .git/hooks.
+  try {
+    const { execFileSync } = await import("node:child_process");
+    const out = execFileSync("git", ["rev-parse", "--git-path", "hooks"], { cwd: root })
+      .toString()
+      .trim();
+    if (out) return resolve(root, out);
+  } catch {}
+  // Fallback (git binary unavailable): only safe when .git is a real directory
+  try {
+    const info = await stat(join(root, ".git"));
+    if (info.isDirectory()) return join(root, ".git", "hooks");
+  } catch {}
+  return null;
+}
 
-  if (!(await fileExists(join(root, ".git")))) {
-    console.log("  No .git directory found. Initialize a git repo first.");
+async function installGitHook(root: string, outputDirName: string) {
+  const hooksDir = await resolveGitHooksDir(root);
+
+  if (!hooksDir) {
+    console.log("  No git repository found. Initialize a git repo first.");
     return;
   }
+
+  const hookPath = join(hooksDir, "pre-commit");
 
   await mkdir(hooksDir, { recursive: true });
 
@@ -184,7 +194,7 @@ async function installGitHook(root: string, outputDirName: string) {
   const { chmod } = await import("node:fs/promises");
   await chmod(hookPath, 0o755);
 
-  console.log(`  Git pre-commit hook installed at .git/hooks/pre-commit`);
+  console.log(`  Git pre-commit hook installed at ${hookPath}`);
 }
 
 async function watchMode(root: string, outputDirName: string, maxDepth: number, userConfig: CodesightConfig = {}, wikiMode = false) {

@@ -7,6 +7,7 @@
  */
 import type { RouteInfo, Framework } from "../types.js";
 import { parseSourceFile, getDecorators, parseDecorator, getText } from "./loader.js";
+import { detectTags } from "../detectors/route-tags.js";
 
 const HTTP_METHODS = new Set(["get", "post", "put", "patch", "delete", "options", "head", "all"]);
 
@@ -19,6 +20,53 @@ function extractPathParams(path: string): string[] {
 }
 
 /**
+ * Top-level function/const names -> their full text, so a route registration
+ * that references a handler by name (`.get("/x", getUsers)`) can include the
+ * handler's body in its tag scope.
+ */
+function buildLocalFnMap(ts: any, sf: any): Map<string, string> {
+  const SK = ts.SyntaxKind;
+  const map = new Map<string, string>();
+  for (const stmt of sf.statements || []) {
+    if (stmt.kind === SK.FunctionDeclaration && stmt.name) {
+      map.set(getText(sf, stmt.name), getText(sf, stmt));
+    } else if (stmt.kind === SK.VariableStatement) {
+      for (const decl of stmt.declarationList?.declarations || []) {
+        if (!decl.name || decl.name.kind !== SK.Identifier || !decl.initializer) continue;
+        const k = decl.initializer.kind;
+        if (k === SK.ArrowFunction || k === SK.FunctionExpression || k === SK.CallExpression) {
+          map.set(getText(sf, decl.name), getText(sf, decl));
+        }
+      }
+    }
+  }
+  return map;
+}
+
+/**
+ * Tags scoped to one route registration (issue #52): the registration call
+ * itself — inline handler included — plus the bodies of same-file handlers it
+ * references by name. Never the whole file, so routes with different policies
+ * in one file stop inheriting each other's tags.
+ */
+function scopedRouteTags(
+  ts: any,
+  sf: any,
+  node: any,
+  localFns: Map<string, string>
+): string[] {
+  const SK = ts.SyntaxKind;
+  let text = getText(sf, node);
+  for (const arg of node.arguments || []) {
+    if (arg.kind === SK.Identifier) {
+      const t = localFns.get(getText(sf, arg));
+      if (t) text += "\n" + t;
+    }
+  }
+  return detectTags(text);
+}
+
+/**
  * Try AST-based route extraction for a single file.
  * Returns routes with confidence: 'ast', or empty array if AST cannot handle this file.
  */
@@ -26,8 +74,7 @@ export function extractRoutesAST(
   ts: any,
   filePath: string,
   content: string,
-  framework: Framework,
-  tags: string[]
+  framework: Framework
 ): RouteInfo[] {
   try {
     const sf = parseSourceFile(ts, filePath, content);
@@ -37,11 +84,11 @@ export function extractRoutesAST(
       case "fastify":
       case "koa":
       case "elysia":
-        return extractHttpFrameworkRoutes(ts, sf, filePath, content, framework, tags);
+        return extractHttpFrameworkRoutes(ts, sf, filePath, content, framework);
       case "nestjs":
-        return extractNestJSRoutes(ts, sf, filePath, content, tags);
+        return extractNestJSRoutes(ts, sf, filePath, content);
       case "trpc":
-        return extractTRPCRoutes(ts, sf, filePath, content, tags);
+        return extractTRPCRoutes(ts, sf, filePath, content);
       default:
         return [];
     }
@@ -57,11 +104,11 @@ function extractHttpFrameworkRoutes(
   sf: any,
   filePath: string,
   _content: string,
-  framework: Framework,
-  tags: string[]
+  framework: Framework
 ): RouteInfo[] {
   const routes: RouteInfo[] = [];
   const SK = ts.SyntaxKind;
+  const localFns = buildLocalFnMap(ts, sf);
 
   // Track router.use('/prefix', subRouter) for prefix resolution
   const prefixMap = new Map<string, string>(); // variable name -> prefix
@@ -122,7 +169,7 @@ function extractHttpFrameworkRoutes(
                   method: routeDef.method.toUpperCase(),
                   path: routeDef.path,
                   file: filePath,
-                  tags,
+                  tags: scopedRouteTags(ts, sf, node, localFns),
                   framework,
                   params: extractPathParams(routeDef.path),
                   confidence: "ast",
@@ -140,7 +187,7 @@ function extractHttpFrameworkRoutes(
                 method: routeDef.method.toUpperCase(),
                 path: routeDef.path,
                 file: filePath,
-                tags,
+                tags: scopedRouteTags(ts, sf, node, localFns),
                 framework,
                 params: extractPathParams(routeDef.path),
                 confidence: "ast",
@@ -182,7 +229,7 @@ function extractHttpFrameworkRoutes(
               method: methodName.toUpperCase() === "ALL" ? "ALL" : methodName.toUpperCase(),
               path: fullPath,
               file: filePath,
-              tags,
+              tags: scopedRouteTags(ts, sf, node, localFns),
               framework,
               params: extractPathParams(fullPath),
               confidence: "ast",
@@ -246,8 +293,7 @@ function extractNestJSRoutes(
   ts: any,
   sf: any,
   filePath: string,
-  _content: string,
-  tags: string[]
+  _content: string
 ): RouteInfo[] {
   const routes: RouteInfo[] = [];
   const SK = ts.SyntaxKind;
@@ -314,11 +360,14 @@ function extractNestJSRoutes(
             if (mp.name === "UseGuards" && mp.arg) middleware.push(mp.arg);
           }
 
+          // Scope: the method declaration (decorators + body) plus class-level
+          // guards — never the sibling handlers in the same controller
+          const scope = getText(sf, member) + (classGuards.length ? "\n" + classGuards.join(" ") : "");
           routes.push({
             method: NEST_METHOD_MAP[parsed.name],
             path: normalizedPath,
             file: filePath,
-            tags,
+            tags: detectTags(scope),
             framework: "nestjs",
             params: params.length > 0 ? params : extractPathParams(normalizedPath),
             confidence: "ast",
@@ -341,11 +390,22 @@ function extractTRPCRoutes(
   ts: any,
   sf: any,
   filePath: string,
-  _content: string,
-  tags: string[]
+  _content: string
 ): RouteInfo[] {
   const routes: RouteInfo[] = [];
   const SK = ts.SyntaxKind;
+  const localFns = buildLocalFnMap(ts, sf);
+
+  // Scope: the procedure's own property (chain incl. resolver), plus the text
+  // of a same-file variable when the property just references one by name
+  function propTags(prop: any, refName?: string): string[] {
+    let text = getText(sf, prop);
+    if (refName) {
+      const t = localFns.get(refName);
+      if (t) text += "\n" + t;
+    }
+    return detectTags(text);
+  }
 
   function isRouterCall(node: any): boolean {
     if (node.kind !== SK.CallExpression) return false;
@@ -397,7 +457,7 @@ function extractTRPCRoutes(
             method,
             path: prefix ? `${prefix}.${name}` : name,
             file: filePath,
-            tags,
+            tags: propTags(prop),
             framework: "trpc",
             confidence: "ast",
           });
@@ -414,7 +474,7 @@ function extractTRPCRoutes(
             method: "PROCEDURE",
             path: prefix ? `${prefix}.${name}` : name,
             file: filePath,
-            tags,
+            tags: propTags(prop, identName || undefined),
             framework: "trpc",
             confidence: "ast",
           });
@@ -430,7 +490,7 @@ function extractTRPCRoutes(
           method: "PROCEDURE",
           path: prefix ? `${prefix}.${name}` : name,
           file: filePath,
-          tags,
+          tags: propTags(prop, name),
           framework: "trpc",
           confidence: "ast",
         });

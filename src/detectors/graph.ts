@@ -25,10 +25,14 @@ export async function detectDependencyGraph(
   // Build a lookup map for faster resolution: relative path -> true
   const relPathSet = new Set<string>();
   const relPaths: string[] = [];
+  // "/"-normalized rel path -> platform rel path, for extractors that build
+  // candidate paths with forward slashes regardless of OS
+  const normalizedPaths = new Map<string, string>();
   for (const file of files) {
     const rel = relative(project.root, file);
     relPathSet.add(rel);
     relPaths.push(rel);
+    normalizedPaths.set(rel.replace(/\\/g, "/"), rel);
   }
 
   for (const file of codeFiles) {
@@ -39,7 +43,7 @@ export async function detectDependencyGraph(
     const ext = extname(file);
 
     if (ext === ".py") {
-      extractPythonImports(content, rel, edges, importCount);
+      extractPythonImports(content, rel, edges, importCount, normalizedPaths);
     } else if (ext === ".go") {
       extractGoImports(content, rel, edges, importCount);
     } else if (ext === ".rb") {
@@ -122,16 +126,118 @@ function extractPythonImports(
   content: string,
   rel: string,
   edges: ImportEdge[],
-  importCount: Map<string, number>
+  importCount: Map<string, number>,
+  normalizedPaths: Map<string, string>
 ) {
-  // from .module import something or from ..package.module import something
-  const fromPattern = /^from\s+(\.+\w[\w.]*)\s+import/gm;
-  let match: RegExpExecArray | null;
-  while ((match = fromPattern.exec(content)) !== null) {
-    const target = match[1].replace(/\./g, "/") + ".py";
+  const relNorm = rel.replace(/\\/g, "/");
+  const dir = dirname(relNorm) === "." ? "" : dirname(relNorm);
+  const seen = new Set<string>();
+
+  const addEdge = (target: string) => {
+    if (target === rel || seen.has(target)) return;
+    seen.add(target);
     edges.push({ from: rel, to: target });
     importCount.set(target, (importCount.get(target) || 0) + 1);
+  };
+
+  // "/"-joined module path (no extension) -> existing project file, or null.
+  // Modules resolve to either <path>.py or a package's <path>/__init__.py.
+  const resolveModule = (base: string): string | null => {
+    if (!base) return null;
+    return (
+      normalizedPaths.get(base + ".py") ??
+      normalizedPaths.get(base + "/__init__.py") ??
+      null
+    );
+  };
+
+  // Absolute imports resolve against the importing file's package ancestors
+  // (innermost first, project root last). This covers plain-root layouts as
+  // well as source roots like src/ or backend/ without hardcoding names.
+  const ancestors: string[] = [];
+  for (let d = dir; d; ) {
+    ancestors.push(d);
+    const idx = d.lastIndexOf("/");
+    d = idx === -1 ? "" : d.slice(0, idx);
   }
+  ancestors.push("");
+  const resolveAbsolute = (modulePath: string): string | null => {
+    for (const a of ancestors) {
+      const hit = resolveModule(a ? `${a}/${modulePath}` : modulePath);
+      if (hit) return hit;
+    }
+    return null;
+  };
+
+  // "a, b as c, d" -> ["a", "b", "d"]; drops "*" and "("-wrapped fragments
+  const parseNames = (names: string): string[] =>
+    names
+      .split(",")
+      .map((n) => n.trim().split(/\s+as\s+/)[0].trim())
+      .filter((n) => /^[A-Za-z_]\w*$/.test(n));
+
+  // from [dots][module] import names — relative (leading dots) or absolute
+  const fromPattern = /^[ \t]*from[ \t]+(\.*)([\w.]*)[ \t]+import[ \t]+(.+)$/gm;
+  let match: RegExpExecArray | null;
+  while ((match = fromPattern.exec(content)) !== null) {
+    const dots = match[1];
+    const modPath = match[2].replace(/\./g, "/");
+    const names = parseNames(match[3]);
+    const isRelative = dots.length > 0;
+
+    // Base package/module the import references, as a "/"-joined path
+    let base: string | null;
+    if (isRelative) {
+      // one dot = current package, each extra dot walks one level up
+      let d: string | null = dir;
+      for (let i = 1; i < dots.length && d !== null; i++) {
+        d = d === "" ? null : d.includes("/") ? d.slice(0, d.lastIndexOf("/")) : "";
+      }
+      if (d === null) continue; // walks above the project root
+      base = modPath ? (d ? `${d}/${modPath}` : modPath) : d;
+    } else {
+      base = modPath;
+    }
+
+    const tryResolve = (p: string): string | null =>
+      isRelative ? resolveModule(p) : resolveAbsolute(p);
+
+    // Imported names may themselves be modules (from app import config).
+    // Names that don't resolve are symbols living in the base module.
+    let sawSymbol = names.length === 0;
+    let resolvedAny = false;
+    for (const name of names) {
+      const hit = base !== "" ? tryResolve(`${base}/${name}`) : isRelative ? resolveModule(name) : resolveAbsolute(name);
+      if (hit) {
+        addEdge(hit);
+        resolvedAny = true;
+      } else {
+        sawSymbol = true;
+      }
+    }
+    if ((sawSymbol || !resolvedAny) && base) {
+      const baseHit = tryResolve(base);
+      if (baseHit) addEdge(baseHit);
+    }
+  }
+
+  // import a.b[, c.d] — absolute only; unresolvable targets (stdlib,
+  // third-party) simply produce no edge
+  const importPattern = /^[ \t]*import[ \t]+([\w. \t,]+)$/gm;
+  while ((match = importPattern.exec(content)) !== null) {
+    for (const name of parseNamesDotted(match[1])) {
+      const hit = resolveAbsolute(name.replace(/\./g, "/"));
+      if (hit) addEdge(hit);
+    }
+  }
+}
+
+// "a.b, c.d as e" -> ["a.b", "c.d"]
+function parseNamesDotted(names: string): string[] {
+  return names
+    .split(",")
+    .map((n) => n.trim().split(/\s+as\s+/)[0].trim())
+    .filter((n) => /^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*$/.test(n));
 }
 
 function extractGoImports(

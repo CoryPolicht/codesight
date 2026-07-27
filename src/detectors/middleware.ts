@@ -83,16 +83,17 @@ export async function detectMiddleware(
 ): Promise<MiddlewareInfo[]> {
   const middleware: MiddlewareInfo[] = [];
 
-  // Look for middleware files
-  const middlewareFiles = files.filter(
-    (f) =>
-      f.includes("middleware") ||
-      f.includes("guard") ||
-      f.includes("interceptor") ||
+  // Look for middleware files. Basename heuristics (auth*, *rate*, *cors*)
+  // must not catch route modules — routes/auth.ts is a router, not middleware.
+  const middlewareFiles = files.filter((f) => {
+    if (f.includes("middleware") || f.includes("guard") || f.includes("interceptor")) return true;
+    if (/[\\/](?:routes?|controllers?|handlers?|pages|app)[\\/]/.test(f)) return false;
+    return (
       basename(f).startsWith("auth") ||
       basename(f).includes("rate") ||
       basename(f).includes("cors")
-  );
+    );
+  });
 
   for (const file of middlewareFiles) {
     const content = await readFileSafe(file);
@@ -107,6 +108,21 @@ export async function detectMiddleware(
       type: classifyMiddleware(name, content),
     });
   }
+
+  // Usage-scan candidates are a fallback for middleware that has no file of
+  // its own (library middleware like cors()). When a file-based middleware of
+  // the same type already exists, the usage is just a reference to it under
+  // another name (rate-limit.ts vs rateLimiter) — skip it instead of emitting
+  // a duplicate.
+  const coveredTypes = new Set(
+    middleware.map((m) => m.type).filter((t) => t !== "custom")
+  );
+  const pushScanned = (name: string, file: string, type: MiddlewareInfo["type"]) => {
+    if (type === "custom" || coveredTypes.has(type)) return;
+    if (middleware.some((m) => m.name === name)) return;
+    middleware.push({ name, file, type });
+    coveredTypes.add(type);
+  };
 
   // Scan for inline middleware usage in route files
   const routeFiles = files.filter(
@@ -126,12 +142,9 @@ export async function detectMiddleware(
     let match;
     while ((match = usePattern.exec(content)) !== null) {
       const fnName = match[1];
-      const type = classifyMiddleware(fnName, "");
-      if (type !== "custom") {
-        if (!middleware.some((m) => m.name === fnName)) {
-          middleware.push({ name: fnName, file: rel, type });
-        }
-      }
+      // Mounted routers (app.use('/api/auth', authRouter)) are not middleware
+      if (/router$|routes$/i.test(fnName)) continue;
+      pushScanned(fnName, rel, classifyMiddleware(fnName, ""));
     }
 
     // Inline route middleware arrays:
@@ -143,10 +156,7 @@ export async function detectMiddleware(
       for (const part of arrayContent.split(",")) {
         const mwName = part.trim().replace(/\(.*$/, "");
         if (!mwName || mwName.length < 3) continue;
-        const type = classifyMiddleware(mwName, "");
-        if (type !== "custom" && !middleware.some((m) => m.name === mwName)) {
-          middleware.push({ name: mwName, file: rel, type });
-        }
+        pushScanned(mwName, rel, classifyMiddleware(mwName, ""));
       }
     }
 
@@ -157,10 +167,7 @@ export async function detectMiddleware(
       // match[2] is the middle arg (middleware), match[3] is the handler
       const mwName = match[2];
       if (!mwName || mwName.length < 3) continue;
-      const type = classifyMiddleware(mwName, "");
-      if (type !== "custom" && !middleware.some((m) => m.name === mwName)) {
-        middleware.push({ name: mwName, file: rel, type });
-      }
+      pushScanned(mwName, rel, classifyMiddleware(mwName, ""));
     }
   }
 

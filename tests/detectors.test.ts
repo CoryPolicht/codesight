@@ -412,6 +412,120 @@ console.log(helper);`,
     const graph = await mods.detectDependencyGraph(files, project);
     assert.ok(graph.edges.length >= 1, "Should resolve .js import to .ts file");
   });
+
+  it("resolves Python imports against the importing file's directory (issue #53)", async () => {
+    const dir = await writeFixture("py-graph-app", {
+      "pyproject.toml": `[project]\nname = "test"`,
+      "app/__init__.py": ``,
+      "app/config.py": `settings = {}`,
+      "src/pkg/__init__.py": ``,
+      "src/pkg/scoring.py": `def score(): pass`,
+      "src/util/__init__.py": ``,
+      "src/util/grid.py": `class Grid: pass`,
+      "src/pkg/a.py": `from .scoring import score`,
+      "src/pkg/b.py": `from ..util.grid import Grid`,
+      "src/pkg/c.py": `from app.config import settings`,
+      "src/pkg/d.py": `from . import scoring`,
+      "src/pkg/e.py": `import app.config\nimport os\nfrom typing import List`,
+    });
+    const project = await mods.detectProject(dir);
+    const files = await mods.collectFiles(dir);
+    const graph = await mods.detectDependencyGraph(files, project);
+
+    const norm = (p: string) => p.replace(/\\/g, "/");
+    const edgeSet = new Set(graph.edges.map((e: any) => `${norm(e.from)} -> ${norm(e.to)}`));
+
+    // Relative import resolves within the importing file's package
+    assert.ok(edgeSet.has("src/pkg/a.py -> src/pkg/scoring.py"), `a.py edge missing, got: ${[...edgeSet].join("; ")}`);
+    // Parent-relative import walks up one level (no doubled slash, no root anchor)
+    assert.ok(edgeSet.has("src/pkg/b.py -> src/util/grid.py"), `b.py edge missing, got: ${[...edgeSet].join("; ")}`);
+    // Absolute import resolves against the project root
+    assert.ok(edgeSet.has("src/pkg/c.py -> app/config.py"), `c.py edge missing, got: ${[...edgeSet].join("; ")}`);
+    // from . import module
+    assert.ok(edgeSet.has("src/pkg/d.py -> src/pkg/scoring.py"), `d.py edge missing, got: ${[...edgeSet].join("; ")}`);
+    // plain import a.b
+    assert.ok(edgeSet.has("src/pkg/e.py -> app/config.py"), `e.py edge missing, got: ${[...edgeSet].join("; ")}`);
+
+    // Every emitted target must be a real project file — no fabricated paths
+    const fileSet = new Set(files.map((f: string) => norm(f)));
+    for (const e of graph.edges) {
+      const abs = norm(join(dir, e.to));
+      assert.ok(fileSet.has(abs), `Edge target does not exist on disk: ${e.to}`);
+    }
+
+    // stdlib / third-party imports produce no edges
+    for (const e of graph.edges) {
+      assert.ok(!norm(e.to).includes("typing"), "stdlib import should not create an edge");
+      assert.ok(!/^os\.py$/.test(norm(e.to)), "stdlib import should not create an edge");
+    }
+  });
+});
+
+// =================== ROUTE TAG SCOPING TESTS (issue #52) ===================
+
+describe("Route Tags", async () => {
+  const mods = await loadModules();
+
+  it("scopes tags per route; comments and substrings never tag auth", async () => {
+    const dir = await writeFixture("route-tags-express", {
+      "package.json": JSON.stringify({ name: "test", dependencies: { express: "^4.18.0" } }),
+      "src/routes.ts": `import express from "express";
+const router = express.Router();
+
+// The health endpoint is public and unauthenticated. The author documented it.
+router.get("/health", (req, res) => {
+  // no auth required here
+  res.json({ ok: true });
+});
+
+router.post("/billing", (req, res) => {
+  const session = requireAuth(req);
+  return stripe.checkout(session);
+});
+
+export default router;`,
+    });
+    const project = await mods.detectProject(dir);
+    const files = await mods.collectFiles(dir);
+    const routes = await mods.detectRoutes(files, project);
+
+    const health = routes.find((r: any) => r.path === "/health");
+    const billing = routes.find((r: any) => r.path === "/billing");
+    assert.ok(health && billing, `expected both routes, got ${routes.map((r: any) => r.path).join(", ")}`);
+    assert.ok(!health.tags.includes("auth"), `public /health tagged auth: [${health.tags.join(", ")}]`);
+    assert.ok(billing.tags.includes("auth"), `/billing missing auth: [${billing.tags.join(", ")}]`);
+    assert.ok(billing.tags.includes("payment"), `/billing missing payment: [${billing.tags.join(", ")}]`);
+  });
+
+  it("FastAPI: public route in a file with auth-mentioning comments stays untagged", async () => {
+    const dir = await writeFixture("route-tags-fastapi", {
+      "requirements.txt": "fastapi==0.110.0",
+      "main.py": `from fastapi import FastAPI
+
+app = FastAPI()
+
+# Portal-authenticated routes live in billing.py. Public read below.
+
+@app.get("/api/v1/health")
+async def health():
+    return {"ok": True}
+
+@app.get("/api/v1/me")
+async def me(token: str):
+    session = validate_token(token)
+    return session.user
+`,
+    });
+    const project = await mods.detectProject(dir);
+    const files = await mods.collectFiles(dir);
+    const routes = await mods.detectRoutes(files, project);
+
+    const health = routes.find((r: any) => r.path === "/api/v1/health");
+    const me = routes.find((r: any) => r.path === "/api/v1/me");
+    assert.ok(health && me, `expected both routes, got ${routes.map((r: any) => r.path).join(", ")}`);
+    assert.ok(!health.tags.includes("auth"), `public health route tagged auth: [${health.tags.join(", ")}]`);
+    assert.ok(me.tags.includes("auth"), `token-validated route missing auth: [${me.tags.join(", ")}]`);
+  });
 });
 
 // =================== CONFIG DETECTION TESTS ===================
@@ -433,6 +547,40 @@ const port = process.env.PORT || 3000;`,
     const config = await mods.detectConfig(files, project);
     assert.ok(config.envVars.length >= 2, `Expected >= 2 env vars, got ${config.envVars.length}`);
     assert.ok(config.envVars.some((e: any) => e.name === "DATABASE_URL"));
+  });
+
+  it("detects defaults on code-scanned env vars (issue #51)", async () => {
+    const dir = await writeFixture("config-defaults-app", {
+      "package.json": JSON.stringify({ name: "test" }),
+      "app/settings.py": `import os
+ENABLE_LEGACY = os.getenv("ENABLE_LEGACY", "false")
+TIMEOUT = os.environ.get("TIMEOUT", "30")
+API_KEY = os.getenv("API_KEY")
+SECRET = os.environ["SECRET"]`,
+      "src/server.ts": `const port = process.env.PORT || 3000;
+const region = process.env.REGION ?? "us-east-1";
+const dbUrl = process.env.DATABASE_URL;
+const mode = import.meta.env.VITE_MODE || "dev";`,
+    });
+    const project = await mods.detectProject(dir);
+    const files = await mods.collectFiles(dir);
+    const config = await mods.detectConfig(files, project);
+    const byName = new Map(config.envVars.map((e: any) => [e.name, e]));
+
+    const expectDefault = (name: string, hasDefault: boolean) => {
+      const v: any = byName.get(name);
+      assert.ok(v, `Expected env var ${name}, got ${[...byName.keys()].join(", ")}`);
+      assert.equal(v.hasDefault, hasDefault, `${name}: expected hasDefault=${hasDefault}`);
+    };
+
+    expectDefault("ENABLE_LEGACY", true);
+    expectDefault("TIMEOUT", true);
+    expectDefault("API_KEY", false);
+    expectDefault("SECRET", false);
+    expectDefault("PORT", true);
+    expectDefault("REGION", true);
+    expectDefault("DATABASE_URL", false);
+    expectDefault("VITE_MODE", true);
   });
 });
 

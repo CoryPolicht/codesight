@@ -1,29 +1,128 @@
 {
   "routes": [
-    { "method": "GET", "path": "/health" },
-    { "method": "GET", "path": "/" },
-    { "method": "GET", "path": "/{user_id}" },
-    { "method": "POST", "path": "/" },
-    { "method": "DELETE", "path": "/{user_id}" },
-    { "method": "GET", "path": "/{item_id}" },
-    { "method": "POST", "path": "/" },
-    { "method": "PUT", "path": "/{item_id}" },
-    { "method": "POST", "path": "/login" },
-    { "method": "POST", "path": "/register" }
+    {
+      "method": "GET",
+      "path": "/health"
+    },
+    {
+      "method": "GET",
+      "path": "/"
+    },
+    {
+      "method": "GET",
+      "path": "/{user_id}"
+    },
+    {
+      "method": "POST",
+      "path": "/"
+    },
+    {
+      "method": "DELETE",
+      "path": "/{user_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/{item_id}"
+    },
+    {
+      "method": "POST",
+      "path": "/"
+    },
+    {
+      "method": "PUT",
+      "path": "/{item_id}"
+    },
+    {
+      "method": "POST",
+      "path": "/login"
+    },
+    {
+      "method": "POST",
+      "path": "/register"
+    }
   ],
   "models": [
     {
       "name": "User",
-      "fields": ["id", "email", "password", "name", "is_active", "items", "created_at"]
+      "fields": [
+        "id",
+        "email",
+        "password",
+        "name",
+        "is_active",
+        "items",
+        "created_at"
+      ]
     },
     {
       "name": "Item",
-      "fields": ["id", "title", "description", "price", "owner_id", "owner", "created_at"]
+      "fields": [
+        "id",
+        "title",
+        "description",
+        "price",
+        "owner_id",
+        "owner",
+        "created_at"
+      ]
     },
     {
       "name": "Category",
-      "fields": ["id", "name", "description"]
+      "fields": [
+        "id",
+        "name",
+        "description"
+      ]
     }
   ],
-  "envVars": ["DATABASE_URL", "SECRET_KEY", "DEBUG", "ALLOWED_ORIGINS"]
+  "envVars": [
+    "ALLOWED_ORIGINS",
+    "DATABASE_URL",
+    "DEBUG",
+    "ENABLE_METRICS",
+    "SECRET_KEY",
+    "SENTRY_DSN"
+  ],
+  "envVarDefaults": {
+    "DATABASE_URL": true,
+    "SECRET_KEY": true,
+    "DEBUG": true,
+    "ALLOWED_ORIGINS": true,
+    "ENABLE_METRICS": true,
+    "SENTRY_DSN": false
+  },
+  "graphEdges": [
+    {
+      "from": "app/main.py",
+      "to": "app/routes/users.py"
+    },
+    {
+      "from": "app/main.py",
+      "to": "app/routes/items.py"
+    },
+    {
+      "from": "app/main.py",
+      "to": "app/routes/auth.py"
+    },
+    {
+      "from": "app/models.py",
+      "to": "app/db.py"
+    },
+    {
+      "from": "app/routes/items.py",
+      "to": "app/db.py"
+    },
+    {
+      "from": "app/routes/items.py",
+      "to": "app/models.py"
+    },
+    {
+      "from": "app/routes/users.py",
+      "to": "app/db.py"
+    },
+    {
+      "from": "app/routes/users.py",
+      "to": "app/models.py"
+    }
+  ]
 }

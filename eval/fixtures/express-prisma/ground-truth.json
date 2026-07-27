@@ -1,31 +1,160 @@
 {
   "routes": [
-    { "method": "POST", "path": "/login" },
-    { "method": "POST", "path": "/register" },
-    { "method": "GET", "path": "/" },
-    { "method": "GET", "path": "/:id" },
-    { "method": "PUT", "path": "/:id" },
-    { "method": "DELETE", "path": "/:id" },
-    { "method": "POST", "path": "/" }
+    {
+      "method": "POST",
+      "path": "/api/auth/login"
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/register"
+    },
+    {
+      "method": "GET",
+      "path": "/api/users"
+    },
+    {
+      "method": "GET",
+      "path": "/api/users/:id"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/users/:id"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/users/:id"
+    },
+    {
+      "method": "GET",
+      "path": "/api/posts"
+    },
+    {
+      "method": "GET",
+      "path": "/api/posts/:id"
+    },
+    {
+      "method": "POST",
+      "path": "/api/posts"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/posts/:id"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/posts/:id"
+    }
   ],
   "models": [
     {
       "name": "User",
-      "fields": ["id", "email", "password", "name", "role", "posts", "createdAt"]
+      "fields": [
+        "id",
+        "email",
+        "password",
+        "name",
+        "role",
+        "posts",
+        "createdAt"
+      ]
     },
     {
       "name": "Post",
-      "fields": ["id", "title", "content", "published", "author", "authorId", "tags", "createdAt"]
+      "fields": [
+        "id",
+        "title",
+        "content",
+        "published",
+        "author",
+        "authorId",
+        "tags",
+        "createdAt"
+      ]
     },
     {
       "name": "Tag",
-      "fields": ["id", "name", "posts"]
+      "fields": [
+        "id",
+        "name",
+        "posts"
+      ]
     },
     {
       "name": "enum:Role",
-      "fields": ["USER", "ADMIN"]
+      "fields": [
+        "USER",
+        "ADMIN"
+      ]
     }
   ],
-  "envVars": ["DATABASE_URL", "JWT_SECRET", "PORT", "REDIS_URL", "CORS_ORIGIN"],
-  "middleware": ["auth", "error", "rate-limit", "cors"]
+  "envVars": [
+    "DATABASE_URL",
+    "JWT_SECRET",
+    "PORT",
+    "REDIS_URL",
+    "CORS_ORIGIN"
+  ],
+  "middleware": [
+    "auth",
+    "error",
+    "rate-limit",
+    "cors"
+  ],
+  "envVarDefaults": {
+    "DATABASE_URL": true,
+    "JWT_SECRET": true,
+    "PORT": true,
+    "REDIS_URL": true,
+    "CORS_ORIGIN": true
+  },
+  "graphEdges": [
+    {
+      "from": "src/index.ts",
+      "to": "src/routes/auth.ts"
+    },
+    {
+      "from": "src/index.ts",
+      "to": "src/routes/users.ts"
+    },
+    {
+      "from": "src/index.ts",
+      "to": "src/routes/posts.ts"
+    },
+    {
+      "from": "src/index.ts",
+      "to": "src/middleware/error.ts"
+    },
+    {
+      "from": "src/index.ts",
+      "to": "src/middleware/rate-limit.ts"
+    },
+    {
+      "from": "src/middleware/auth.ts",
+      "to": "src/lib/jwt.ts"
+    },
+    {
+      "from": "src/routes/auth.ts",
+      "to": "src/lib/prisma.ts"
+    },
+    {
+      "from": "src/routes/auth.ts",
+      "to": "src/lib/jwt.ts"
+    },
+    {
+      "from": "src/routes/posts.ts",
+      "to": "src/lib/prisma.ts"
+    },
+    {
+      "from": "src/routes/posts.ts",
+      "to": "src/middleware/auth.ts"
+    },
+    {
+      "from": "src/routes/users.ts",
+      "to": "src/lib/prisma.ts"
+    },
+    {
+      "from": "src/routes/users.ts",
+      "to": "src/middleware/auth.ts"
+    }
+  ]
 }

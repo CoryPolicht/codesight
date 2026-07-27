@@ -12,14 +12,24 @@ import { detectSchemas } from "./detectors/schema.js";
 import { detectComponents } from "./detectors/components.js";
 import { detectConfig } from "./detectors/config.js";
 import { detectMiddleware } from "./detectors/middleware.js";
+import { detectDependencyGraph } from "./detectors/graph.js";
 
 interface GroundTruth {
   routes?: { method: string; path: string }[];
   models?: { name: string; fields?: string[]; relations?: string[] }[];
   components?: { name: string; props?: string[] }[];
   envVars?: string[];
+  /** name -> whether the var has a default (issue #51: names alone can't catch
+   * a wrong required/optional field) */
+  envVarDefaults?: Record<string, boolean>;
   middleware?: string[];
+  /** dependency edges (issue #53: --eval previously never saw the graph) */
+  graphEdges?: { from: string; to: string }[];
 }
+
+/** Any category on any fixture below this F1 fails the eval run (exit 1).
+ * A high average must not be able to outvote a structurally broken category. */
+const CATEGORY_F1_FLOOR = 0.5;
 
 interface EvalMetrics {
   precision: number;
@@ -36,7 +46,9 @@ interface FixtureResult {
   models: EvalMetrics;
   components?: EvalMetrics;
   envVars: EvalMetrics;
+  envDefaults?: EvalMetrics;
   middleware?: EvalMetrics;
+  graph?: EvalMetrics;
   runtime: number;
 }
 
@@ -97,12 +109,13 @@ async function evalFixture(fixturePath: string): Promise<FixtureResult> {
     // Run codesight detectors
     const project = await detectProject(tmpDir);
     const files = await collectFiles(tmpDir, 10);
-    const [routes, schemas, components, config, middleware] = await Promise.all([
+    const [routes, schemas, components, config, middleware, graph] = await Promise.all([
       detectRoutes(files, project),
       detectSchemas(files, project),
       detectComponents(files, project),
       detectConfig(files, project),
       detectMiddleware(files, project),
+      detectDependencyGraph(files, project),
     ]);
 
     const runtime = Date.now() - startTime;
@@ -139,6 +152,31 @@ async function evalFixture(fixturePath: string): Promise<FixtureResult> {
       const detectedMw = new Set(middleware.map((m) => m.name));
       const expectedMw = new Set(groundTruth.middleware);
       result.middleware = calcMetrics(detectedMw, expectedMw);
+    }
+
+    // Env var required/optional field — scored as name=hasDefault pairs so a
+    // categorically wrong flag shows up even when every name is found
+    if (groundTruth.envVarDefaults && Object.keys(groundTruth.envVarDefaults).length > 0) {
+      const expectedNames = new Set(Object.keys(groundTruth.envVarDefaults));
+      const detectedDefaults = new Set(
+        config.envVars
+          .filter((e) => expectedNames.has(e.name))
+          .map((e) => `${e.name}=${e.hasDefault}`)
+      );
+      const expectedDefaults = new Set(
+        Object.entries(groundTruth.envVarDefaults).map(([n, d]) => `${n}=${d}`)
+      );
+      result.envDefaults = calcMetrics(detectedDefaults, expectedDefaults);
+    }
+
+    // Dependency graph edges — fabricated or unresolved targets count as FPs
+    if (groundTruth.graphEdges && groundTruth.graphEdges.length > 0) {
+      const norm = (p: string) => p.replace(/\\/g, "/");
+      const detectedEdges = new Set(graph.edges.map((e) => `${norm(e.from)} -> ${norm(e.to)}`));
+      const expectedEdges = new Set(
+        groundTruth.graphEdges.map((e) => `${norm(e.from)} -> ${norm(e.to)}`)
+      );
+      result.graph = calcMetrics(detectedEdges, expectedEdges);
     }
 
     return result;
@@ -187,6 +225,9 @@ async function runEvalFromDir(evalDir: string, fixtureNames: string[]): Promise<
   let totalRecall = 0;
   let totalF1 = 0;
   let metricCount = 0;
+  // Every scored category with its fixture, so the summary can report the
+  // minimum and fail on collapse instead of letting the average hide it
+  const scored: { fixture: string; category: string; m: EvalMetrics }[] = [];
 
   for (const name of fixtureNames) {
     const fixturePath = join(evalDir, name);
@@ -203,24 +244,26 @@ async function runEvalFromDir(evalDir: string, fixtureNames: string[]): Promise<
     results.push(result);
     console.log(` ${result.runtime}ms`);
 
-    printMetrics("Routes", result.routes);
-    printMetrics("Models", result.models);
-    printMetrics("Env vars", result.envVars);
-    if (result.components) printMetrics("Components", result.components);
-    if (result.middleware) printMetrics("Middleware", result.middleware);
-    console.log("");
+    const categories: [string, EvalMetrics | undefined][] = [
+      ["Routes", result.routes],
+      ["Models", result.models],
+      ["Env vars", result.envVars],
+      ["Env defaults", result.envDefaults],
+      ["Components", result.components],
+      ["Middleware", result.middleware],
+      ["Graph edges", result.graph],
+    ];
 
-    // Accumulate for averages
-    const metrics = [result.routes, result.models, result.envVars];
-    if (result.components) metrics.push(result.components);
-    if (result.middleware) metrics.push(result.middleware);
-
-    for (const m of metrics) {
+    for (const [label, m] of categories) {
+      if (!m) continue;
+      printMetrics(label, m);
+      scored.push({ fixture: result.name, category: label, m });
       totalPrecision += m.precision;
       totalRecall += m.recall;
       totalF1 += m.f1;
       metricCount++;
     }
+    console.log("");
   }
 
   if (results.length === 0) {
@@ -233,12 +276,30 @@ async function runEvalFromDir(evalDir: string, fixtureNames: string[]): Promise<
   const avgR = totalRecall / metricCount;
   const avgF1 = totalF1 / metricCount;
   const totalRuntime = results.reduce((s, r) => s + r.runtime, 0);
+  const worst = scored.reduce((a, b) => (b.m.f1 < a.m.f1 ? b : a));
 
   console.log("  ──────────────────────────────────────────");
   console.log(`  Fixtures:           ${results.length}`);
   console.log(`  Avg precision:      ${formatPercent(avgP)}`);
   console.log(`  Avg recall:         ${formatPercent(avgR)}`);
   console.log(`  Avg F1:             ${formatPercent(avgF1)}`);
+  console.log(`  Min F1:             ${formatPercent(worst.m.f1)} (${worst.fixture} / ${worst.category})`);
   console.log(`  Total runtime:      ${totalRuntime}ms`);
+
+  // TP:0 with FPs is fabrication, not incompleteness — call it out by name
+  const fabricated = scored.filter(({ m }) => m.truePositives === 0 && m.falsePositives > 0);
+  for (const { fixture, category, m } of fabricated) {
+    console.log(`  ⚠ ${fixture} / ${category}: 0 correct with ${m.falsePositives} false positives — output is fabricated, not incomplete`);
+  }
+
+  const failures = scored.filter(({ m }) => m.f1 < CATEGORY_F1_FLOOR);
+  if (failures.length > 0) {
+    console.log("");
+    for (const { fixture, category, m } of failures) {
+      console.log(`  FAIL ${fixture} / ${category}: F1 ${formatPercent(m.f1)} < floor ${formatPercent(CATEGORY_F1_FLOOR)}`);
+    }
+    console.log(`  Eval failed: ${failures.length} categor${failures.length === 1 ? "y" : "ies"} below the F1 floor.`);
+    process.exitCode = 1;
+  }
   console.log("");
 }

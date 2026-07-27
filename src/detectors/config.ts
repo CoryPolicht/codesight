@@ -129,59 +129,60 @@ async function detectEnvVars(
     const content = await readFileSafe(file);
     const rel = relative(project.root, file);
 
-    // process.env.VAR_NAME or process.env["VAR_NAME"]
-    const nodeEnvPattern = /process\.env\.([A-Z_][A-Z0-9_]*)/g;
+    // A read has a default when a fallback is attached at the read site:
+    // JS `|| value` / `?? value`, Python's optional second argument. Bare reads
+    // (`process.env.X`, `os.environ["X"]`) stay required.
+    const addEnv = (name: string, hasDefault: boolean) => {
+      if (!envMap.has(name)) {
+        envMap.set(name, { name, source: rel, hasDefault });
+      }
+    };
+
+    // process.env.VAR_NAME or process.env["VAR_NAME"], optional || / ?? fallback
+    const nodeEnvPattern =
+      /process\.env\.([A-Z_][A-Z0-9_]*)(\s*(?:\?\?|\|\|))?/g;
     let match;
     while ((match = nodeEnvPattern.exec(content)) !== null) {
-      const name = match[1];
-      if (!envMap.has(name)) {
-        envMap.set(name, { name, source: rel, hasDefault: false });
-      }
+      addEnv(match[1], Boolean(match[2]));
     }
 
-    const nodeEnvBracket = /process\.env\[['"]([A-Z_][A-Z0-9_]*)['"]\]/g;
+    const nodeEnvBracket =
+      /process\.env\[['"]([A-Z_][A-Z0-9_]*)['"]\](\s*(?:\?\?|\|\|))?/g;
     while ((match = nodeEnvBracket.exec(content)) !== null) {
-      const name = match[1];
-      if (!envMap.has(name)) {
-        envMap.set(name, { name, source: rel, hasDefault: false });
-      }
+      addEnv(match[1], Boolean(match[2]));
     }
 
     // Bun.env.VAR_NAME
-    const bunEnvPattern = /Bun\.env\.([A-Z_][A-Z0-9_]*)/g;
+    const bunEnvPattern = /Bun\.env\.([A-Z_][A-Z0-9_]*)(\s*(?:\?\?|\|\|))?/g;
     while ((match = bunEnvPattern.exec(content)) !== null) {
-      const name = match[1];
-      if (!envMap.has(name)) {
-        envMap.set(name, { name, source: rel, hasDefault: false });
-      }
+      addEnv(match[1], Boolean(match[2]));
     }
 
     // import.meta.env.VITE_VAR_NAME
-    const viteEnvPattern = /import\.meta\.env\.([A-Z_][A-Z0-9_]*)/g;
+    const viteEnvPattern =
+      /import\.meta\.env\.([A-Z_][A-Z0-9_]*)(\s*(?:\?\?|\|\|))?/g;
     while ((match = viteEnvPattern.exec(content)) !== null) {
-      const name = match[1];
-      if (!envMap.has(name)) {
-        envMap.set(name, { name, source: rel, hasDefault: false });
-      }
+      addEnv(match[1], Boolean(match[2]));
     }
 
-    // Python: os.environ["VAR"] or os.environ.get("VAR") or os.getenv("VAR")
-    const pyEnvPattern =
-      /os\.(?:environ\[['"]|environ\.get\s*\(['"]|getenv\s*\(['"])([A-Z_][A-Z0-9_]*)['"]/g;
-    while ((match = pyEnvPattern.exec(content)) !== null) {
-      const name = match[1];
-      if (!envMap.has(name)) {
-        envMap.set(name, { name, source: rel, hasDefault: false });
-      }
+    // Python: os.environ.get("VAR"[, default]) or os.getenv("VAR"[, default])
+    const pyEnvGetPattern =
+      /os\.(?:environ\.get|getenv)\s*\(\s*['"]([A-Z_][A-Z0-9_]*)['"]\s*(,\s*[^)]+)?\)/g;
+    while ((match = pyEnvGetPattern.exec(content)) !== null) {
+      addEnv(match[1], Boolean(match[2]));
     }
 
-    // Go: os.Getenv("VAR")
+    // Python: os.environ["VAR"] — raises KeyError when unset, always required
+    const pyEnvBracket = /os\.environ\[['"]([A-Z_][A-Z0-9_]*)['"]\]/g;
+    while ((match = pyEnvBracket.exec(content)) !== null) {
+      addEnv(match[1], false);
+    }
+
+    // Go: os.Getenv("VAR") — returns "" when unset; LookupEnv is the
+    // required-style read, so Getenv alone can't prove required vs optional
     const goEnvPattern = /os\.Getenv\(["']([A-Z_][A-Z0-9_]*)["']\)/g;
     while ((match = goEnvPattern.exec(content)) !== null) {
-      const name = match[1];
-      if (!envMap.has(name)) {
-        envMap.set(name, { name, source: rel, hasDefault: false });
-      }
+      addEnv(match[1], false);
     }
   }
 

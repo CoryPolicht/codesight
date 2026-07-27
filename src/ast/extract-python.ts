@@ -11,6 +11,7 @@
 
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { detectTagsForLineSpan } from "../detectors/route-tags.js";
 import type { RouteInfo, SchemaModel, SchemaField, Framework } from "../types.js";
 
 const execFileP = promisify(execFile);
@@ -31,10 +32,14 @@ def extract_routes(source, filename):
     for node in ast.walk(tree):
         # FastAPI/Flask style: @router.get("/path") or @app.route("/path", methods=["GET","POST"])
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            start = node.decorator_list[0].lineno if node.decorator_list else node.lineno
+            end = getattr(node, 'end_lineno', None) or node.lineno
             for dec in node.decorator_list:
                 route = parse_route_decorator(dec)
                 if route:
                     for r in route:
+                        r['lineno'] = start
+                        r['end_lineno'] = end
                         routes.append(r)
 
         # Django: path("url", view) in urlpatterns list
@@ -602,11 +607,17 @@ export async function extractPythonRoutesAST(
   const result = await runPythonWithStdin(PYTHON_ROUTE_SCRIPT, content, filePath);
   if (!result || !Array.isArray(result) || result.length === 0) return null;
 
+  // Tag from the handler's own line span when the AST reports one (issue #52);
+  // routes without span info (urlpatterns entries) keep the caller's tags.
+  const lines = content.split("\n");
   return result.map((r: any) => ({
     method: r.method,
     path: r.path,
     file: filePath,
-    tags,
+    tags:
+      typeof r.lineno === "number" && typeof r.end_lineno === "number"
+        ? detectTagsForLineSpan(lines, r.lineno, r.end_lineno)
+        : tags,
     framework,
     params: extractPathParams(r.path),
     confidence: "ast" as const,

@@ -9,30 +9,12 @@ import { extractAspNetControllerRoutes, extractAspNetMinimalApiRoutes } from "..
 import { extractFlutterRoutes } from "../ast/extract-dart.js";
 import { extractVaporRoutes } from "../ast/extract-swift.js";
 import { extractRetrofitRoutes, extractNavigationRoutes, extractActivitiesFromManifest } from "../ast/extract-android.js";
+import { detectTags, detectTagsScoped } from "./route-tags.js";
 import type { RouteInfo, Framework, ProjectInfo, CodesightConfig } from "../types.js";
 
 const HTTP_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"];
 
-const TAG_PATTERNS: [string, RegExp[]][] = [
-  ["auth", [/auth/i, /jwt/i, /token/i, /session/i, /bearer/i, /passport/i, /clerk/i, /betterAuth/i, /better-auth/i]],
-  ["db", [/prisma/i, /drizzle/i, /typeorm/i, /sequelize/i, /mongoose/i, /knex/i, /sql/i, /\.query\(/i, /\.execute\(/i, /\.findMany\(/i, /\.findFirst\(/i, /\.insert\(/i, /\.update\(/i, /\.delete\(/i]],
-  ["cache", [/redis/i, /cache/i, /memcache/i, /\.setex\(/i, /\.getex\(/i]],
-  ["queue", [/bullmq/i, /bull\b/i, /\.add\(\s*['"`]/i, /queue/i]],
-  ["email", [/resend/i, /sendgrid/i, /nodemailer/i, /\.send\(\s*\{[\s\S]*?to:/i]],
-  ["payment", [/stripe/i, /polar/i, /paddle/i, /lemon/i, /checkout/i, /webhook/i]],
-  ["upload", [/multer/i, /formidable/i, /busboy/i, /upload/i, /multipart/i]],
-  ["ai", [/openai/i, /anthropic/i, /claude/i, /\.chat\.completions/i, /\.messages\.create/i]],
-];
-
-export function detectTags(content: string): string[] {
-  const tags: string[] = [];
-  for (const [tag, patterns] of TAG_PATTERNS) {
-    if (patterns.some((p) => p.test(content))) {
-      tags.push(tag);
-    }
-  }
-  return tags;
-}
+export { detectTags } from "./route-tags.js";
 
 export async function detectRoutes(
   files: string[],
@@ -289,11 +271,10 @@ async function detectHonoRoutes(
     if (!content.includes("hono") && !content.includes("Hono")) continue;
 
     const rel = relative(project.root, file);
-    const tags = detectTags(content);
 
     // Try AST first
     if (ts) {
-      const astRoutes = extractRoutesAST(ts, rel, content, "hono", tags);
+      const astRoutes = extractRoutesAST(ts, rel, content, "hono");
       if (astRoutes.length > 0) {
         routes.push(...astRoutes);
         continue;
@@ -303,19 +284,20 @@ async function detectHonoRoutes(
     // Regex fallback
     const routePattern =
       /\.\s*(get|post|put|patch|delete|options|all)\s*\(\s*['"`]([^'"`]+)['"`]/gi;
-    let match;
-    while ((match = routePattern.exec(content)) !== null) {
+    const matches = Array.from(content.matchAll(routePattern));
+    const scopedTags = detectTagsScoped(content, matches.map((m) => m.index));
+    matches.forEach((match, i) => {
       const path = match[2];
-      if (!path.startsWith("/") && !path.startsWith(":")) continue;
+      if (!path.startsWith("/") && !path.startsWith(":")) return;
       routes.push({
         method: match[1].toUpperCase(),
         path,
         file: rel,
-        tags,
+        tags: scopedTags[i],
         framework: "hono",
         confidence: "regex",
       });
-    }
+    });
   }
 
   return routes;
@@ -335,11 +317,10 @@ async function detectExpressRoutes(
     if (!content.includes("express") && !content.includes("Router")) continue;
 
     const rel = relative(project.root, file);
-    const tags = detectTags(content);
 
     // Try AST first
     if (ts) {
-      const astRoutes = extractRoutesAST(ts, rel, content, "express", tags);
+      const astRoutes = extractRoutesAST(ts, rel, content, "express");
       if (astRoutes.length > 0) {
         routes.push(...astRoutes);
         continue;
@@ -349,17 +330,18 @@ async function detectExpressRoutes(
     // Regex fallback
     const routePattern =
       /(?:app|router|server)\s*\.\s*(get|post|put|patch|delete|options|all)\s*\(\s*['"`]([^'"`]+)['"`]/gi;
-    let match;
-    while ((match = routePattern.exec(content)) !== null) {
+    const matches = Array.from(content.matchAll(routePattern));
+    const scopedTags = detectTagsScoped(content, matches.map((m) => m.index));
+    matches.forEach((match, i) => {
       routes.push({
         method: match[1].toUpperCase(),
         path: match[2],
         file: rel,
-        tags,
+        tags: scopedTags[i],
         framework: "express",
         confidence: "regex",
       });
-    }
+    });
   }
 
   return routes;
@@ -379,11 +361,10 @@ async function detectFastifyRoutes(
     if (!content.includes("fastify")) continue;
 
     const rel = relative(project.root, file);
-    const tags = detectTags(content);
 
     // Try AST first
     if (ts) {
-      const astRoutes = extractRoutesAST(ts, rel, content, "fastify", tags);
+      const astRoutes = extractRoutesAST(ts, rel, content, "fastify");
       if (astRoutes.length > 0) {
         routes.push(...astRoutes);
         continue;
@@ -393,31 +374,34 @@ async function detectFastifyRoutes(
     // Regex fallback
     const routePattern =
       /(?:fastify|server|app)\s*\.\s*(get|post|put|patch|delete|options|all)\s*\(\s*['"`]([^'"`]+)['"`]/gi;
-    let match;
-    while ((match = routePattern.exec(content)) !== null) {
+    const matches = Array.from(content.matchAll(routePattern));
+    const scopedTags = detectTagsScoped(content, matches.map((m) => m.index));
+    matches.forEach((match, i) => {
       routes.push({
         method: match[1].toUpperCase(),
         path: match[2],
         file: rel,
-        tags,
+        tags: scopedTags[i],
         framework: "fastify",
         confidence: "regex",
       });
-    }
+    });
 
     // Object-style route registration
     const objPattern =
       /\.route\s*\(\s*\{[\s\S]*?method:\s*['"`](\w+)['"`][\s\S]*?url:\s*['"`]([^'"`]+)['"`]/gi;
-    while ((match = objPattern.exec(content)) !== null) {
+    const objMatches = Array.from(content.matchAll(objPattern));
+    const objTags = detectTagsScoped(content, objMatches.map((m) => m.index));
+    objMatches.forEach((match, i) => {
       routes.push({
         method: match[1].toUpperCase(),
         path: match[2],
         file: rel,
-        tags,
+        tags: objTags[i],
         framework: "fastify",
         confidence: "regex",
       });
-    }
+    });
   }
 
   return routes;
@@ -437,10 +421,9 @@ async function detectKoaRoutes(
     if (!content.includes("koa") && !content.includes("Router")) continue;
 
     const rel = relative(project.root, file);
-    const tags = detectTags(content);
 
     if (ts) {
-      const astRoutes = extractRoutesAST(ts, rel, content, "koa", tags);
+      const astRoutes = extractRoutesAST(ts, rel, content, "koa");
       if (astRoutes.length > 0) {
         routes.push(...astRoutes);
         continue;
@@ -449,17 +432,18 @@ async function detectKoaRoutes(
 
     const routePattern =
       /router\s*\.\s*(get|post|put|patch|delete|options|all)\s*\(\s*['"`]([^'"`]+)['"`]/gi;
-    let match;
-    while ((match = routePattern.exec(content)) !== null) {
+    const matches = Array.from(content.matchAll(routePattern));
+    const scopedTags = detectTagsScoped(content, matches.map((m) => m.index));
+    matches.forEach((match, i) => {
       routes.push({
         method: match[1].toUpperCase(),
         path: match[2],
         file: rel,
-        tags,
+        tags: scopedTags[i],
         framework: "koa",
         confidence: "regex",
       });
-    }
+    });
   }
 
   return routes;
@@ -479,11 +463,10 @@ async function detectNestJSRoutes(
     if (!content.includes("@Controller") && !content.includes("@Get") && !content.includes("@Post")) continue;
 
     const rel = relative(project.root, file);
-    const tags = detectTags(content);
 
     // Try AST — NestJS benefits most from AST (decorator + controller prefix combining)
     if (ts) {
-      const astRoutes = extractRoutesAST(ts, rel, content, "nestjs", tags);
+      const astRoutes = extractRoutesAST(ts, rel, content, "nestjs");
       if (astRoutes.length > 0) {
         routes.push(...astRoutes);
         continue;
@@ -495,8 +478,9 @@ async function detectNestJSRoutes(
     const basePath = controllerMatch ? "/" + controllerMatch[1].replace(/^\//, "") : "";
 
     const decoratorPattern = /@(Get|Post|Put|Patch|Delete|Options|Head|All)\s*\(\s*(?:['"`]([^'"`]*)['"`])?\s*\)/gi;
-    let match;
-    while ((match = decoratorPattern.exec(content)) !== null) {
+    const matches = Array.from(content.matchAll(decoratorPattern));
+    const scopedTags = detectTagsScoped(content, matches.map((m) => m.index));
+    matches.forEach((match, i) => {
       const method = match[1].toUpperCase();
       const subPath = match[2] || "";
       const fullPath = basePath + (subPath ? "/" + subPath.replace(/^\//, "") : "") || "/";
@@ -504,11 +488,11 @@ async function detectNestJSRoutes(
         method,
         path: fullPath,
         file: rel,
-        tags,
+        tags: scopedTags[i],
         framework: "nestjs",
         confidence: "regex",
       });
-    }
+    });
   }
 
   return routes;
@@ -528,10 +512,9 @@ async function detectElysiaRoutes(
     if (!content.includes("elysia") && !content.includes("Elysia")) continue;
 
     const rel = relative(project.root, file);
-    const tags = detectTags(content);
 
     if (ts) {
-      const astRoutes = extractRoutesAST(ts, rel, content, "elysia", tags);
+      const astRoutes = extractRoutesAST(ts, rel, content, "elysia");
       if (astRoutes.length > 0) {
         routes.push(...astRoutes);
         continue;
@@ -539,19 +522,20 @@ async function detectElysiaRoutes(
     }
 
     const routePattern = /\.\s*(get|post|put|patch|delete|options|all)\s*\(\s*['"`]([^'"`]+)['"`]/gi;
-    let match;
-    while ((match = routePattern.exec(content)) !== null) {
+    const matches = Array.from(content.matchAll(routePattern));
+    const scopedTags = detectTagsScoped(content, matches.map((m) => m.index));
+    matches.forEach((match, i) => {
       const path = match[2];
-      if (!path.startsWith("/") && !path.startsWith(":")) continue;
+      if (!path.startsWith("/") && !path.startsWith(":")) return;
       routes.push({
         method: match[1].toUpperCase(),
         path,
         file: rel,
-        tags,
+        tags: scopedTags[i],
         framework: "elysia",
         confidence: "regex",
       });
-    }
+    });
   }
 
   return routes;
@@ -573,16 +557,17 @@ async function detectAdonisRoutes(
     const rel = relative(project.root, file);
 
     const routePattern = /(?:Route|router)\s*\.\s*(get|post|put|patch|delete|any)\s*\(\s*['"`]([^'"`]+)['"`]/gi;
-    let match;
-    while ((match = routePattern.exec(content)) !== null) {
+    const matches = Array.from(content.matchAll(routePattern));
+    const scopedTags = detectTagsScoped(content, matches.map((m) => m.index));
+    matches.forEach((match, i) => {
       routes.push({
         method: match[1].toUpperCase() === "ANY" ? "ALL" : match[1].toUpperCase(),
         path: match[2],
         file: rel,
-        tags: detectTags(content),
+        tags: scopedTags[i],
         framework: "adonis",
       });
-    }
+    });
   }
 
   return routes;
@@ -603,11 +588,10 @@ async function detectTRPCRoutes(
     if (!content.includes("trpc") && !content.includes("TRPC") && !content.includes("createTRPCRouter") && !content.includes("publicProcedure") && !content.includes("protectedProcedure")) continue;
 
     const rel = relative(project.root, file);
-    const tags = detectTags(content);
 
     // AST handles tRPC much better — properly parses router nesting and procedure chains
     if (ts) {
-      const astRoutes = extractRoutesAST(ts, rel, content, "trpc", tags);
+      const astRoutes = extractRoutesAST(ts, rel, content, "trpc");
       if (astRoutes.length > 0) {
         routes.push(...astRoutes);
         continue;
@@ -616,25 +600,28 @@ async function detectTRPCRoutes(
 
     // Regex fallback
     const lines = content.split("\n");
+    const found: { procName: string; isQuery: boolean; offset: number }[] = [];
+    let offset = 0;
     for (const line of lines) {
       const queryMatch = line.match(/^\s*(\w+)\s*:\s*.*\.(query)\s*\(/);
       const mutationMatch = line.match(/^\s*(\w+)\s*:\s*.*\.(mutation)\s*\(/);
       const m = queryMatch || mutationMatch;
-      if (m) {
-        const procName = m[1];
-        const isQuery = m[2] === "query";
-        if (!routes.some((r) => r.path === procName && r.file === rel)) {
-          routes.push({
-            method: isQuery ? "QUERY" : "MUTATION",
-            path: procName,
-            file: rel,
-            tags,
-            framework: "trpc",
-            confidence: "regex",
-          });
-        }
-      }
+      if (m) found.push({ procName: m[1], isQuery: m[2] === "query", offset });
+      offset += line.length + 1;
     }
+    const scopedTags = detectTagsScoped(content, found.map((f) => f.offset));
+    found.forEach((f, i) => {
+      if (!routes.some((r) => r.path === f.procName && r.file === rel)) {
+        routes.push({
+          method: f.isQuery ? "QUERY" : "MUTATION",
+          path: f.procName,
+          file: rel,
+          tags: scopedTags[i],
+          framework: "trpc",
+          confidence: "regex",
+        });
+      }
+    });
   }
 
   return routes;
@@ -809,16 +796,17 @@ async function detectFastAPIRoutes(
     // Fallback to regex
     const routePattern =
       /@\w+\s*\.\s*(get|post|put|patch|delete|options)\s*\(\s*['"]([^'"]+)['"]/gi;
-    let match;
-    while ((match = routePattern.exec(content)) !== null) {
+    const matches = Array.from(content.matchAll(routePattern));
+    const scopedTags = detectTagsScoped(content, matches.map((m) => m.index));
+    matches.forEach((match, i) => {
       routes.push({
         method: match[1].toUpperCase(),
         path: match[2],
         file: rel,
-        tags,
+        tags: scopedTags[i],
         framework: "fastapi",
       });
-    }
+    });
   }
 
   return routes;
@@ -849,8 +837,9 @@ async function detectFlaskRoutes(
     // Fallback to regex
     const routePattern =
       /@(?:app|bp|blueprint|\w+)\s*\.\s*route\s*\(\s*['"]([^'"]+)['"](?:\s*,\s*methods\s*=\s*\[([^\]]+)\])?\s*\)/gi;
-    let match;
-    while ((match = routePattern.exec(content)) !== null) {
+    const matches = Array.from(content.matchAll(routePattern));
+    const scopedTags = detectTagsScoped(content, matches.map((m) => m.index));
+    matches.forEach((match, i) => {
       const path = match[1];
       const methods = match[2]
         ? match[2].match(/['"](\w+)['"]/g)?.map((m) => m.replace(/['"]/g, "").toUpperCase()) || ["GET"]
@@ -861,11 +850,11 @@ async function detectFlaskRoutes(
           method,
           path,
           file: rel,
-          tags,
+          tags: scopedTags[i],
           framework: "flask",
         });
       }
-    }
+    });
   }
 
   return routes;
@@ -895,16 +884,17 @@ async function detectDjangoRoutes(
 
     // Fallback to regex
     const pathPattern = /path\s*\(\s*['"]([^'"]*)['"]\s*,/g;
-    let match;
-    while ((match = pathPattern.exec(content)) !== null) {
+    const matches = Array.from(content.matchAll(pathPattern));
+    const scopedTags = detectTagsScoped(content, matches.map((m) => m.index));
+    matches.forEach((match, i) => {
       routes.push({
         method: "ALL",
         path: "/" + match[1],
         file: rel,
-        tags,
+        tags: scopedTags[i],
         framework: "django",
       });
-    }
+    });
   }
 
   return routes;
@@ -934,29 +924,32 @@ async function detectGoRoutes(
     // Fallback to simple regex for files where structured parser found nothing
     if (fw === "gin" || fw === "echo") {
       const pattern = /\.\s*(GET|POST|PUT|PATCH|DELETE|OPTIONS|HEAD)\s*\(\s*["']([^"']+)["']/g;
-      let match;
-      while ((match = pattern.exec(content)) !== null) {
-        routes.push({ method: match[1], path: match[2], file: rel, tags, framework: fw });
-      }
+      const matches = Array.from(content.matchAll(pattern));
+      const scopedTags = detectTagsScoped(content, matches.map((m) => m.index));
+      matches.forEach((match, i) => {
+        routes.push({ method: match[1], path: match[2], file: rel, tags: scopedTags[i], framework: fw });
+      });
     } else if (fw === "fiber" || fw === "chi") {
       const pattern = /\.\s*(Get|Post|Put|Patch|Delete|Options|Head)\s*\(\s*["']([^"']+)["']/g;
-      let match;
-      while ((match = pattern.exec(content)) !== null) {
-        routes.push({ method: match[1].toUpperCase(), path: match[2], file: rel, tags, framework: fw });
-      }
+      const matches = Array.from(content.matchAll(pattern));
+      const scopedTags = detectTagsScoped(content, matches.map((m) => m.index));
+      matches.forEach((match, i) => {
+        routes.push({ method: match[1].toUpperCase(), path: match[2], file: rel, tags: scopedTags[i], framework: fw });
+      });
     } else {
       // net/http
       const pattern = /(?:HandleFunc|Handle)\s*\(\s*["']([^"']+)["']/g;
-      let match;
-      while ((match = pattern.exec(content)) !== null) {
+      const matches = Array.from(content.matchAll(pattern));
+      const scopedTags = detectTagsScoped(content, matches.map((m) => m.index));
+      matches.forEach((match, i) => {
         // Go 1.22+: "GET /path" patterns
         const pathStr = match[1];
         let method = "ALL";
         let path = pathStr;
         const methodMatch = pathStr.match(/^(GET|POST|PUT|PATCH|DELETE|OPTIONS|HEAD)\s+(\/.*)/);
         if (methodMatch) { method = methodMatch[1]; path = methodMatch[2]; }
-        routes.push({ method, path, file: rel, tags, framework: fw });
-      }
+        routes.push({ method, path, file: rel, tags: scopedTags[i], framework: fw });
+      });
     }
   }
 

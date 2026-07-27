@@ -1,33 +1,104 @@
 {
   "routes": [
-    { "method": "GET", "path": "/health" },
-    { "method": "POST", "path": "/login" },
-    { "method": "POST", "path": "/register" },
-    { "method": "POST", "path": "/refresh" },
-    { "method": "GET", "path": "/" },
-    { "method": "GET", "path": "/:id" },
-    { "method": "PUT", "path": "/:id" },
-    { "method": "DELETE", "path": "/:id" },
-    { "method": "GET", "path": "/" },
-    { "method": "GET", "path": "/:id" },
-    { "method": "POST", "path": "/" }
+    {
+      "method": "GET",
+      "path": "/health"
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/login"
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/register"
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/refresh"
+    },
+    {
+      "method": "GET",
+      "path": "/api/users"
+    },
+    {
+      "method": "GET",
+      "path": "/api/users/:id"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/users/:id"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/users/:id"
+    },
+    {
+      "method": "GET",
+      "path": "/api/projects"
+    },
+    {
+      "method": "GET",
+      "path": "/api/projects/:id"
+    },
+    {
+      "method": "POST",
+      "path": "/api/projects"
+    }
   ],
   "models": [
     {
       "name": "users",
-      "fields": ["id", "email", "name", "role", "createdAt"],
-      "relations": ["projects"]
+      "fields": [
+        "id",
+        "email",
+        "name",
+        "role",
+        "createdAt"
+      ],
+      "relations": [
+        "projects"
+      ]
     },
     {
       "name": "projects",
-      "fields": ["id", "name", "description", "ownerId", "isPublic", "createdAt"],
-      "relations": ["owner"]
+      "fields": [
+        "id",
+        "name",
+        "description",
+        "ownerId",
+        "isPublic",
+        "createdAt"
+      ],
+      "relations": [
+        "owner"
+      ]
     }
   ],
   "components": [
-    { "name": "ProjectCard", "props": ["name", "description", "isPublic"] },
-    { "name": "UserAvatar", "props": ["name", "size"] }
+    {
+      "name": "ProjectCard",
+      "props": [
+        "name",
+        "description",
+        "isPublic"
+      ]
+    },
+    {
+      "name": "UserAvatar",
+      "props": [
+        "name",
+        "size"
+      ]
+    }
   ],
-  "envVars": ["DATABASE_URL", "JWT_SECRET", "PORT"],
-  "middleware": ["auth"]
+  "envVars": [
+    "DATABASE_URL",
+    "JWT_SECRET",
+    "PORT"
+  ],
+  "middleware": [
+    "auth",
+    "cors",
+    "logger"
+  ]
 }
